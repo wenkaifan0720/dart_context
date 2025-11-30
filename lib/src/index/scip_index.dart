@@ -1,0 +1,494 @@
+import 'dart:io';
+
+import 'package:collection/collection.dart';
+// ignore: implementation_imports
+import 'package:scip_dart/src/gen/scip.pb.dart' as scip;
+
+/// Queryable in-memory SCIP index with O(1) lookups.
+///
+/// Built from SCIP protobuf data, provides fast access to:
+/// - Symbol definitions and references
+/// - Class members and hierarchy
+/// - File-to-symbol mappings
+class ScipIndex {
+  ScipIndex._({
+    required Map<String, SymbolInfo> symbolIndex,
+    required Map<String, List<OccurrenceInfo>> referenceIndex,
+    required Map<String, scip.Document> documentIndex,
+    required Map<String, List<String>> childIndex,
+    required String projectRoot,
+  })  : _symbolIndex = symbolIndex,
+        _referenceIndex = referenceIndex,
+        _documentIndex = documentIndex,
+        _childIndex = childIndex,
+        _projectRoot = projectRoot;
+
+  final Map<String, SymbolInfo> _symbolIndex;
+  final Map<String, List<OccurrenceInfo>> _referenceIndex;
+  final Map<String, scip.Document> _documentIndex;
+  final Map<String, List<String>> _childIndex; // parent → children
+  final String _projectRoot;
+
+  /// Load index from a SCIP protobuf file.
+  static Future<ScipIndex> loadFromFile(
+    String indexPath, {
+    required String projectRoot,
+  }) async {
+    final bytes = await File(indexPath).readAsBytes();
+    final index = scip.Index.fromBuffer(bytes);
+    return fromScipIndex(index, projectRoot: projectRoot);
+  }
+
+  /// Build index from SCIP protobuf data.
+  static ScipIndex fromScipIndex(
+    scip.Index raw, {
+    required String projectRoot,
+  }) {
+    final symbolIndex = <String, SymbolInfo>{};
+    final referenceIndex = <String, List<OccurrenceInfo>>{};
+    final documentIndex = <String, scip.Document>{};
+    final childIndex = <String, List<String>>{};
+
+    for (final doc in raw.documents) {
+      documentIndex[doc.relativePath] = doc;
+
+      // Index symbols defined in this file
+      for (final sym in doc.symbols) {
+        symbolIndex[sym.symbol] = SymbolInfo.fromScip(
+          sym,
+          file: doc.relativePath,
+        );
+
+        // Track parent-child relationships
+        final parent = _extractParentSymbol(sym.symbol);
+        if (parent != null) {
+          childIndex.putIfAbsent(parent, () => []).add(sym.symbol);
+        }
+      }
+
+      // Index all occurrences (definitions + references)
+      for (final occ in doc.occurrences) {
+        referenceIndex.putIfAbsent(occ.symbol, () => []).add(
+              OccurrenceInfo.fromScip(occ, file: doc.relativePath),
+            );
+      }
+    }
+
+    // Also index external symbols (from dependencies)
+    for (final sym in raw.externalSymbols) {
+      symbolIndex[sym.symbol] = SymbolInfo.fromScip(sym, file: null);
+    }
+
+    return ScipIndex._(
+      symbolIndex: symbolIndex,
+      referenceIndex: referenceIndex,
+      documentIndex: documentIndex,
+      childIndex: childIndex,
+      projectRoot: projectRoot,
+    );
+  }
+
+  /// Create an empty index.
+  factory ScipIndex.empty({required String projectRoot}) {
+    return ScipIndex._(
+      symbolIndex: {},
+      referenceIndex: {},
+      documentIndex: {},
+      childIndex: {},
+      projectRoot: projectRoot,
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // MUTATION (for incremental updates)
+  // ═══════════════════════════════════════════════════════════════════════
+
+  /// Update the index with a new/modified document.
+  void updateDocument(scip.Document doc) {
+    final path = doc.relativePath;
+
+    // Remove old data for this file
+    removeDocument(path);
+
+    // Add new document
+    _documentIndex[path] = doc;
+
+    // Index symbols
+    for (final sym in doc.symbols) {
+      _symbolIndex[sym.symbol] = SymbolInfo.fromScip(sym, file: path);
+
+      final parent = _extractParentSymbol(sym.symbol);
+      if (parent != null) {
+        _childIndex.putIfAbsent(parent, () => []).add(sym.symbol);
+      }
+    }
+
+    // Index occurrences
+    for (final occ in doc.occurrences) {
+      _referenceIndex.putIfAbsent(occ.symbol, () => []).add(
+            OccurrenceInfo.fromScip(occ, file: path),
+          );
+    }
+  }
+
+  /// Remove a document from the index.
+  void removeDocument(String path) {
+    final oldDoc = _documentIndex.remove(path);
+    if (oldDoc == null) return;
+
+    // Remove symbols defined in this file
+    for (final sym in oldDoc.symbols) {
+      _symbolIndex.remove(sym.symbol);
+
+      // Remove from parent's children
+      final parent = _extractParentSymbol(sym.symbol);
+      if (parent != null) {
+        _childIndex[parent]?.remove(sym.symbol);
+      }
+    }
+
+    // Remove occurrences from this file
+    for (final refs in _referenceIndex.values) {
+      refs.removeWhere((occ) => occ.file == path);
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // QUERY API
+  // ═══════════════════════════════════════════════════════════════════════
+
+  /// Find symbols matching a pattern.
+  ///
+  /// Supports wildcards: `Auth*` matches `AuthRepository`, `AuthService`, etc.
+  Iterable<SymbolInfo> findSymbols(String pattern) {
+    if (pattern.isEmpty) return const [];
+
+    // Convert glob pattern to regex
+    final regexPattern = pattern
+        .replaceAll('.', r'\.')
+        .replaceAll('*', '.*')
+        .replaceAll('?', '.');
+
+    final regex = RegExp(regexPattern, caseSensitive: false);
+
+    return _symbolIndex.values.where((sym) {
+      // Match against full symbol or just the name
+      return regex.hasMatch(sym.symbol) || regex.hasMatch(sym.name);
+    });
+  }
+
+  /// Get a symbol by exact ID.
+  SymbolInfo? getSymbol(String symbolId) => _symbolIndex[symbolId];
+
+  /// Find a symbol by exact name (not ID).
+  SymbolInfo? findByName(String name) {
+    return _symbolIndex.values.firstWhereOrNull((s) => s.name == name);
+  }
+
+  /// Find all references to a symbol.
+  List<OccurrenceInfo> findReferences(String symbolId) {
+    return _referenceIndex[symbolId]
+            ?.where((o) => !o.isDefinition)
+            .toList() ??
+        [];
+  }
+
+  /// Find the definition of a symbol.
+  OccurrenceInfo? findDefinition(String symbolId) {
+    return _referenceIndex[symbolId]?.firstWhereOrNull((o) => o.isDefinition);
+  }
+
+  /// Find all implementations of a class/interface.
+  Iterable<SymbolInfo> findImplementations(String symbolId) {
+    return _symbolIndex.values.where(
+      (s) => s.relationships.any(
+        (r) => r.symbol == symbolId && r.isImplementation,
+      ),
+    );
+  }
+
+  /// Get all symbols in a file.
+  Iterable<SymbolInfo> symbolsInFile(String path) {
+    return _symbolIndex.values.where((s) => s.file == path);
+  }
+
+  /// Get members of a class/type.
+  Iterable<SymbolInfo> membersOf(String symbolId) {
+    final children = _childIndex[symbolId] ?? [];
+    return children.map((id) => _symbolIndex[id]).whereType<SymbolInfo>();
+  }
+
+  /// Get supertypes of a class.
+  Iterable<SymbolInfo> supertypesOf(String symbolId) {
+    final sym = _symbolIndex[symbolId];
+    if (sym == null) return const [];
+
+    return sym.relationships
+        .where((r) => r.isImplementation)
+        .map((r) => _symbolIndex[r.symbol])
+        .whereType<SymbolInfo>();
+  }
+
+  /// Get subtypes (implementations) of a class.
+  Iterable<SymbolInfo> subtypesOf(String symbolId) {
+    return findImplementations(symbolId);
+  }
+
+  /// Get the source code for a symbol.
+  Future<String?> getSource(String symbolId) async {
+    final def = findDefinition(symbolId);
+    if (def == null) return null;
+
+    final filePath = '$_projectRoot/${def.file}';
+    final file = File(filePath);
+    if (!await file.exists()) return null;
+
+    final lines = await file.readAsLines();
+    final startLine = def.line;
+    final endLine = def.enclosingEndLine ?? (startLine + 20);
+
+    if (startLine >= lines.length) return null;
+
+    return lines
+        .sublist(startLine, endLine.clamp(0, lines.length))
+        .join('\n');
+  }
+
+  /// Get source context around an occurrence.
+  Future<String?> getContext(
+    OccurrenceInfo occ, {
+    int linesBefore = 2,
+    int linesAfter = 2,
+  }) async {
+    final filePath = '$_projectRoot/${occ.file}';
+    final file = File(filePath);
+    if (!await file.exists()) return null;
+
+    final lines = await file.readAsLines();
+    final start = (occ.line - linesBefore).clamp(0, lines.length);
+    final end = (occ.line + linesAfter + 1).clamp(0, lines.length);
+
+    return lines.sublist(start, end).join('\n');
+  }
+
+  /// Get all files in the index.
+  Iterable<String> get files => _documentIndex.keys;
+
+  /// Get a document by path.
+  scip.Document? getDocument(String path) => _documentIndex[path];
+
+  /// Get the project root.
+  String get projectRoot => _projectRoot;
+
+  /// Get stats about the index.
+  Map<String, int> get stats => {
+        'files': _documentIndex.length,
+        'symbols': _symbolIndex.length,
+        'references': _referenceIndex.values.fold(0, (a, b) => a + b.length),
+      };
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // HELPERS
+  // ═══════════════════════════════════════════════════════════════════════
+
+  /// Extract parent symbol from SCIP symbol string.
+  ///
+  /// SCIP symbols look like:
+  /// `scip-dart pub my_package 1.0.0 lib/foo.dart/MyClass#myMethod().`
+  static String? _extractParentSymbol(String symbol) {
+    // Find the last descriptor marker
+    final lastDot = symbol.lastIndexOf('.');
+    final lastHash = symbol.lastIndexOf('#');
+    final lastParen = symbol.lastIndexOf('(');
+    final lastSlash = symbol.lastIndexOf('/');
+
+    // Find the rightmost descriptor start that's after the file path
+    final descriptorStarts = [lastDot, lastHash, lastParen]
+        .where((i) => i > lastSlash && i > 0)
+        .toList();
+
+    if (descriptorStarts.isEmpty) return null;
+
+    final cutPoint = descriptorStarts.reduce((a, b) => a > b ? a : b);
+
+    // The parent is everything before the last descriptor
+    // But we need to find the second-to-last descriptor
+    final parentEnd = symbol.substring(0, cutPoint).lastIndexOf(
+          RegExp(r'[.#(]'),
+        );
+
+    if (parentEnd <= lastSlash) return null;
+
+    return symbol.substring(0, parentEnd + 1);
+  }
+}
+
+/// Information about a symbol (class, method, function, etc.)
+class SymbolInfo {
+  SymbolInfo({
+    required this.symbol,
+    required this.kind,
+    required this.documentation,
+    required this.relationships,
+    required this.displayName,
+    this.file,
+  });
+
+  factory SymbolInfo.fromScip(scip.SymbolInformation sym, {String? file}) {
+    return SymbolInfo(
+      symbol: sym.symbol,
+      kind: sym.kind,
+      documentation: sym.documentation,
+      relationships: sym.relationships
+          .map(
+            (r) => RelationshipInfo(
+              symbol: r.symbol,
+              isReference: r.isReference,
+              isImplementation: r.isImplementation,
+              isTypeDefinition: r.isTypeDefinition,
+              isDefinition: r.isDefinition,
+            ),
+          )
+          .toList(),
+      displayName: sym.displayName.isNotEmpty ? sym.displayName : null,
+      file: file,
+    );
+  }
+
+  final String symbol;
+  final scip.SymbolInformation_Kind kind;
+  final List<String> documentation;
+  final List<RelationshipInfo> relationships;
+  final String? displayName;
+  final String? file;
+
+  /// Extract the simple name from the symbol ID.
+  String get name {
+    if (displayName != null && displayName!.isNotEmpty) {
+      return displayName!;
+    }
+
+    // Extract name from SCIP symbol
+    // Format: scheme package version path/Class#method().
+    final match = RegExp(r'([A-Za-z_][A-Za-z0-9_]*)[\.\#\(\)\[\]]*$')
+        .firstMatch(symbol);
+    return match?.group(1) ?? symbol;
+  }
+
+  /// Whether this symbol is from an external package.
+  bool get isExternal => file == null;
+
+  /// Get a human-readable kind string.
+  String get kindString {
+    switch (kind) {
+      case scip.SymbolInformation_Kind.Class:
+        return 'class';
+      case scip.SymbolInformation_Kind.Method:
+        return 'method';
+      case scip.SymbolInformation_Kind.Function:
+        return 'function';
+      case scip.SymbolInformation_Kind.Field:
+        return 'field';
+      case scip.SymbolInformation_Kind.Constructor:
+        return 'constructor';
+      case scip.SymbolInformation_Kind.Enum:
+        return 'enum';
+      case scip.SymbolInformation_Kind.EnumMember:
+        return 'enumMember';
+      case scip.SymbolInformation_Kind.Interface:
+        return 'interface';
+      case scip.SymbolInformation_Kind.Variable:
+        return 'variable';
+      case scip.SymbolInformation_Kind.Property:
+        return 'property';
+      case scip.SymbolInformation_Kind.Parameter:
+        return 'parameter';
+      case scip.SymbolInformation_Kind.Mixin:
+        return 'mixin';
+      case scip.SymbolInformation_Kind.Extension:
+        return 'extension';
+      case scip.SymbolInformation_Kind.Getter:
+        return 'getter';
+      case scip.SymbolInformation_Kind.Setter:
+        return 'setter';
+      default:
+        return kind.name.toLowerCase();
+    }
+  }
+
+  @override
+  String toString() => 'SymbolInfo($name: $kindString)';
+}
+
+/// Information about a relationship between symbols.
+class RelationshipInfo {
+  RelationshipInfo({
+    required this.symbol,
+    required this.isReference,
+    required this.isImplementation,
+    required this.isTypeDefinition,
+    required this.isDefinition,
+  });
+
+  final String symbol;
+  final bool isReference;
+  final bool isImplementation;
+  final bool isTypeDefinition;
+  final bool isDefinition;
+}
+
+/// Information about a symbol occurrence (definition or reference).
+class OccurrenceInfo {
+  OccurrenceInfo({
+    required this.file,
+    required this.symbol,
+    required this.line,
+    required this.column,
+    required this.endLine,
+    required this.endColumn,
+    required this.isDefinition,
+    this.enclosingEndLine,
+  });
+
+  factory OccurrenceInfo.fromScip(scip.Occurrence occ, {required String file}) {
+    // SCIP range format: [startLine, startChar, endLine?, endChar]
+    // If 3 elements: endLine = startLine
+    final range = occ.range;
+    final startLine = range.isNotEmpty ? range[0] : 0;
+    final startChar = range.length > 1 ? range[1] : 0;
+    final endLine = range.length > 3 ? range[2] : startLine;
+    final endChar = range.length > 3 ? range[3] : (range.length > 2 ? range[2] : startChar);
+
+    // Enclosing range (for definitions)
+    final enclosing = occ.enclosingRange;
+    final enclosingEnd = enclosing.length > 2 ? enclosing[2] : null;
+
+    return OccurrenceInfo(
+      file: file,
+      symbol: occ.symbol,
+      line: startLine,
+      column: startChar,
+      endLine: endLine,
+      endColumn: endChar,
+      isDefinition: (occ.symbolRoles & scip.SymbolRole.Definition.value) != 0,
+      enclosingEndLine: enclosingEnd,
+    );
+  }
+
+  final String file;
+  final String symbol;
+  final int line;
+  final int column;
+  final int endLine;
+  final int endColumn;
+  final bool isDefinition;
+  final int? enclosingEndLine;
+
+  /// Format as file:line:column.
+  String get location => '$file:${line + 1}:${column + 1}';
+
+  @override
+  String toString() =>
+      'OccurrenceInfo($location, ${isDefinition ? "def" : "ref"})';
+}
+

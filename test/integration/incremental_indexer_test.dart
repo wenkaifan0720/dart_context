@@ -94,8 +94,12 @@ void main() {
         expect((defResult as DefinitionResult).definitions, isNotEmpty);
 
         // References may or may not be found depending on how SCIP indexes them
+        // May return ReferencesResult (single match) or AggregatedReferencesResult (multiple)
         final result = await context.query('refs Greeter');
-        expect(result, isA<ReferencesResult>());
+        expect(
+          result,
+          anyOf(isA<ReferencesResult>(), isA<AggregatedReferencesResult>()),
+        );
         // Note: reference detection depends on SCIP visitor implementation
       } finally {
         await context.dispose();

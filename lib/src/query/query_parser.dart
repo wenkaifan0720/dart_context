@@ -10,6 +10,11 @@
 /// - `hierarchy <symbol>` - Full hierarchy (supertypes + subtypes)
 /// - `source <symbol>` - Get source code
 /// - `find <pattern> [kind:<kind>] [in:<path>]` - Search symbols
+/// - `which <symbol>` - Show all matches for disambiguation
+///
+/// Qualified names:
+/// - `refs MyClass.login` - References to login method in MyClass
+/// - `def AuthService.authenticate` - Definition of authenticate in AuthService
 ///
 /// Filters (for `find`):
 /// - `kind:class` - Filter by symbol kind
@@ -17,7 +22,8 @@
 ///
 /// Examples:
 /// - `def AuthRepository`
-/// - `refs login`
+/// - `refs MyClass.login`
+/// - `which login`
 /// - `members MyClass`
 /// - `find Auth* kind:class`
 /// - `find * kind:method in:lib/auth/`
@@ -142,6 +148,7 @@ class ScipQuery {
       'hierarchy' => QueryAction.hierarchy,
       'source' || 'src' => QueryAction.source,
       'find' || 'search' => QueryAction.find,
+      'which' || 'disambiguate' => QueryAction.which,
       'files' => QueryAction.files,
       'stats' => QueryAction.stats,
       _ => throw FormatException('Unknown action: $action'),
@@ -175,6 +182,15 @@ class ScipQuery {
 
   /// Get the path filter.
   String? get pathFilter => filters['in'];
+
+  /// Check if target is a qualified name (e.g., "MyClass.method").
+  bool get isQualified => target.contains('.');
+
+  /// Get the container part of a qualified name (e.g., "MyClass" from "MyClass.method").
+  String? get container => isQualified ? target.split('.').first : null;
+
+  /// Get the member part of a qualified name (e.g., "method" from "MyClass.method").
+  String get memberName => isQualified ? target.split('.').last : target;
 
   @override
   String toString() {
@@ -212,6 +228,9 @@ enum QueryAction {
 
   /// Search for symbols matching a pattern.
   find,
+
+  /// Show all matches for a symbol (disambiguation).
+  which,
 
   /// List all indexed files.
   files,

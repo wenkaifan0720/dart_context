@@ -497,3 +497,183 @@ class ErrorResult extends QueryResult {
       };
 }
 
+/// Result for disambiguation (which command).
+class WhichResult extends QueryResult {
+  const WhichResult({
+    required this.query,
+    required this.matches,
+  });
+
+  final String query;
+  final List<WhichMatch> matches;
+
+  @override
+  bool get isEmpty => matches.isEmpty;
+
+  @override
+  int get count => matches.length;
+
+  @override
+  String toText() {
+    if (matches.isEmpty) {
+      return 'No symbols found matching "$query".';
+    }
+
+    if (matches.length == 1) {
+      final m = matches.first;
+      return 'Found 1 match for "$query":\n'
+          '  ${m.symbol.name} [${m.symbol.kindString}] in ${m.location ?? 'external'}';
+    }
+
+    final buffer = StringBuffer();
+    buffer.writeln('## Found ${matches.length} symbols matching "$query"');
+    buffer.writeln('');
+    buffer.writeln('Use a qualified name to disambiguate:');
+    buffer.writeln('');
+
+    for (var i = 0; i < matches.length; i++) {
+      final m = matches[i];
+      final location = m.location ?? 'external';
+      final container = m.container;
+      final qualifiedHint = container != null ? '$container.${m.symbol.name}' : m.symbol.name;
+      
+      buffer.writeln('${i + 1}. **${m.symbol.name}** [${m.symbol.kindString}]');
+      buffer.writeln('   File: $location');
+      if (container != null) {
+        buffer.writeln('   Container: $container');
+        buffer.writeln('   Use: `refs $qualifiedHint`');
+      }
+      buffer.writeln('');
+    }
+
+    return buffer.toString().trimRight();
+  }
+
+  @override
+  Map<String, dynamic> toJson() => {
+        'type': 'which',
+        'query': query,
+        'count': matches.length,
+        'matches': matches
+            .map(
+              (m) => {
+                'symbol': m.symbol.symbol,
+                'name': m.symbol.name,
+                'kind': m.symbol.kindString,
+                if (m.location != null) 'file': m.location,
+                if (m.container != null) 'container': m.container,
+                if (m.line != null) 'line': m.line! + 1,
+              },
+            )
+            .toList(),
+      };
+}
+
+/// A single match for disambiguation.
+class WhichMatch {
+  const WhichMatch({
+    required this.symbol,
+    this.location,
+    this.container,
+    this.line,
+  });
+
+  final SymbolInfo symbol;
+  final String? location;
+  final String? container;
+  final int? line;
+}
+
+/// Result containing aggregated references from multiple symbols.
+class AggregatedReferencesResult extends QueryResult {
+  const AggregatedReferencesResult({
+    required this.query,
+    required this.symbolRefs,
+  });
+
+  final String query;
+  final List<SymbolReferences> symbolRefs;
+
+  @override
+  bool get isEmpty => symbolRefs.every((sr) => sr.references.isEmpty);
+
+  @override
+  int get count => symbolRefs.fold(0, (sum, sr) => sum + sr.references.length);
+
+  @override
+  String toText() {
+    if (isEmpty) {
+      return 'No references found for "$query".';
+    }
+
+    final buffer = StringBuffer();
+    buffer.writeln('## References to "$query" (${symbolRefs.length} symbols, $count total refs)');
+    buffer.writeln('');
+
+    for (final sr in symbolRefs) {
+      final container = sr.container != null ? '${sr.container}.' : '';
+      buffer.writeln('### $container${sr.symbol.name} [${sr.symbol.kindString}] (${sr.references.length} refs)');
+      if (sr.symbol.file != null) {
+        buffer.writeln('Defined in: ${sr.symbol.file}');
+      }
+      buffer.writeln('');
+
+      // Group by file
+      final byFile = <String, List<ReferenceMatch>>{};
+      for (final ref in sr.references) {
+        byFile.putIfAbsent(ref.location.file, () => []).add(ref);
+      }
+
+      for (final entry in byFile.entries) {
+        buffer.writeln('  **${entry.key}**');
+        for (final ref in entry.value) {
+          buffer.writeln('  - Line ${ref.location.line + 1}');
+        }
+      }
+      buffer.writeln('');
+    }
+
+    return buffer.toString().trimRight();
+  }
+
+  @override
+  Map<String, dynamic> toJson() => {
+        'type': 'aggregated_references',
+        'query': query,
+        'totalRefs': count,
+        'symbols': symbolRefs
+            .map(
+              (sr) => {
+                'symbol': sr.symbol.symbol,
+                'name': sr.symbol.name,
+                'kind': sr.symbol.kindString,
+                if (sr.container != null) 'container': sr.container,
+                'refCount': sr.references.length,
+                'references': sr.references
+                    .map(
+                      (r) => {
+                        'file': r.location.file,
+                        'line': r.location.line + 1,
+                        'column': r.location.column + 1,
+                      },
+                    )
+                    .toList(),
+              },
+            )
+            .toList(),
+      };
+}
+
+/// References for a single symbol (used in aggregated results).
+class SymbolReferences {
+  const SymbolReferences({
+    required this.symbol,
+    required this.references,
+    this.container,
+  });
+
+  final SymbolInfo symbol;
+  final List<ReferenceMatch> references;
+  final String? container;
+}
+

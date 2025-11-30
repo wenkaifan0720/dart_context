@@ -288,6 +288,72 @@ class ScipIndex {
       };
 
   // ═══════════════════════════════════════════════════════════════════════
+  // QUALIFIED NAME LOOKUPS
+  // ═══════════════════════════════════════════════════════════════════════
+
+  /// Find symbols matching a qualified name like "MyClass.method".
+  ///
+  /// Returns symbols where the member name matches and the container
+  /// (parent class/mixin/etc.) matches the specified container.
+  Iterable<SymbolInfo> findQualified(String container, String member) {
+    // First, find all symbols matching the member name
+    final memberPattern = member
+        .replaceAll('.', r'\.')
+        .replaceAll('*', '.*')
+        .replaceAll('?', '.');
+    final memberRegex = RegExp(memberPattern, caseSensitive: false);
+
+    final containerPattern = container
+        .replaceAll('.', r'\.')
+        .replaceAll('*', '.*')
+        .replaceAll('?', '.');
+    final containerRegex = RegExp(containerPattern, caseSensitive: false);
+
+    return _symbolIndex.values.where((sym) {
+      // Check if member name matches
+      if (!memberRegex.hasMatch(sym.name)) return false;
+
+      // Check if this symbol has a parent (container)
+      final parentId = _extractParentSymbol(sym.symbol);
+      if (parentId == null) return false;
+
+      final parent = _symbolIndex[parentId];
+      if (parent == null) return false;
+
+      // Check if container matches
+      return containerRegex.hasMatch(parent.name);
+    });
+  }
+
+  /// Get the container (parent class/mixin/etc.) of a symbol.
+  SymbolInfo? getContainer(String symbolId) {
+    final parentId = _extractParentSymbol(symbolId);
+    if (parentId == null) return null;
+    return _symbolIndex[parentId];
+  }
+
+  /// Get the container name for a symbol.
+  String? getContainerName(String symbolId) {
+    return getContainer(symbolId)?.name;
+  }
+
+  /// Get detailed match info for disambiguation.
+  List<({SymbolInfo symbol, String? container, OccurrenceInfo? definition})>
+      getMatchesWithContext(String pattern) {
+    final symbols = findSymbols(pattern);
+    final results =
+        <({SymbolInfo symbol, String? container, OccurrenceInfo? definition})>[];
+
+    for (final sym in symbols) {
+      final container = getContainerName(sym.symbol);
+      final def = findDefinition(sym.symbol);
+      results.add((symbol: sym, container: container, definition: def));
+    }
+
+    return results;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
   // HELPERS
   // ═══════════════════════════════════════════════════════════════════════
 

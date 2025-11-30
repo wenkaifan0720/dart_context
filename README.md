@@ -100,8 +100,26 @@ dart_context --no-cache stats
 | `hierarchy <symbol>` | Full hierarchy (supertypes + subtypes) |
 | `source <symbol>` | Get source code for a symbol |
 | `find <pattern>` | Search for symbols matching pattern |
+| `which <symbol>` | Show all matches (for disambiguation) |
 | `files` | List all indexed files |
 | `stats` | Get index statistics |
+
+### Qualified Names (Disambiguation)
+
+When multiple symbols have the same name, use qualified names:
+
+```bash
+# Multiple "login" methods exist - use qualified name
+refs AuthService.login      # References to login in AuthService only
+def UserRepository.login    # Definition of login in UserRepository
+
+# Discover all matches first
+which login
+# Output:
+# 1. login [method] in AuthService (lib/auth/service.dart)
+# 2. login [method] in UserRepository (lib/data/repo.dart)
+# 3. LoginPage [class] (lib/ui/login_page.dart)
+```
 
 ### Filters (for `find`)
 
@@ -112,7 +130,7 @@ dart_context --no-cache stats
 
 ### Examples
 
-```
+```bash
 # Find all classes starting with "Auth"
 find Auth* kind:class
 
@@ -124,6 +142,10 @@ def AuthRepo*
 
 # Get hierarchy of a widget
 hierarchy MyWidget
+
+# Disambiguation workflow
+which handleSubmit         # See all matches
+refs FormWidget.handleSubmit  # Get refs for specific one
 ```
 
 ## Architecture

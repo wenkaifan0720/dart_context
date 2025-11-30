@@ -30,20 +30,31 @@ class QueryExecutor {
       QueryAction.hierarchy => _findHierarchy(query),
       QueryAction.source => _getSource(query),
       QueryAction.find => _search(query),
+      QueryAction.which => _which(query),
       QueryAction.files => _listFiles(),
       QueryAction.stats => _getStats(),
     };
   }
 
+  /// Find symbols based on query, supporting qualified names.
+  List<SymbolInfo> _findMatchingSymbols(ScipQuery query) {
+    if (query.isQualified) {
+      // Qualified lookup: Class.member
+      return index.findQualified(query.container!, query.memberName).toList();
+    } else {
+      // Regular lookup
+      return index.findSymbols(query.target).toList();
+    }
+  }
+
   Future<QueryResult> _findDefinition(ScipQuery query) async {
-    final allSymbols = index.findSymbols(query.target).toList();
+    final allSymbols = _findMatchingSymbols(query);
 
     if (allSymbols.isEmpty) {
       return NotFoundResult('No symbol found matching "${query.target}"');
     }
 
     // Filter to primary definitions only (exclude parameters, local variables)
-    // and prefer exact name matches
     final primaryKinds = {
       'class',
       'method',
@@ -66,9 +77,10 @@ class QueryExecutor {
     final symbols = primarySymbols.isNotEmpty ? primarySymbols : allSymbols;
 
     // Sort by relevance: exact name match first, then by kind priority
+    final targetName = query.memberName;
     symbols.sort((a, b) {
-      final aExact = a.name.toLowerCase() == query.target.toLowerCase();
-      final bExact = b.name.toLowerCase() == query.target.toLowerCase();
+      final aExact = a.name.toLowerCase() == targetName.toLowerCase();
+      final bExact = b.name.toLowerCase() == targetName.toLowerCase();
       if (aExact && !bExact) return -1;
       if (!aExact && bExact) return 1;
 
@@ -135,14 +147,27 @@ class QueryExecutor {
   }
 
   Future<QueryResult> _findReferences(ScipQuery query) async {
-    final symbols = index.findSymbols(query.target).toList();
+    final symbols = _findMatchingSymbols(query);
 
     if (symbols.isEmpty) {
       return NotFoundResult('No symbol found matching "${query.target}"');
     }
 
-    // For now, just use the first matching symbol
-    final sym = symbols.first;
+    // If qualified name used, we have a specific symbol
+    if (query.isQualified && symbols.length == 1) {
+      return _refsForSingleSymbol(symbols.first);
+    }
+
+    // If there's only one match, use it directly
+    if (symbols.length == 1) {
+      return _refsForSingleSymbol(symbols.first);
+    }
+
+    // Multiple matches - return aggregated results
+    return _aggregatedRefs(query.target, symbols);
+  }
+
+  Future<QueryResult> _refsForSingleSymbol(SymbolInfo sym) async {
     final refs = index.findReferences(sym.symbol);
 
     final referenceMatches = <ReferenceMatch>[];
@@ -162,9 +187,58 @@ class QueryExecutor {
     );
   }
 
+  Future<QueryResult> _aggregatedRefs(
+    String query,
+    List<SymbolInfo> symbols,
+  ) async {
+    // Filter to primary kinds (avoid showing parameter/variable matches)
+    final primarySymbols = symbols.where((s) {
+      final kind = s.kindString;
+      return kind == 'class' ||
+          kind == 'method' ||
+          kind == 'function' ||
+          kind == 'field' ||
+          kind == 'constructor' ||
+          kind == 'getter' ||
+          kind == 'setter';
+    }).toList();
+
+    final symbolsToUse = primarySymbols.isNotEmpty ? primarySymbols : symbols;
+    final symbolRefs = <SymbolReferences>[];
+
+    for (final sym in symbolsToUse.take(10)) {
+      // Limit to 10 symbols
+      final refs = index.findReferences(sym.symbol);
+      final container = index.getContainerName(sym.symbol);
+
+      final referenceMatches = <ReferenceMatch>[];
+      for (final ref in refs) {
+        final context = await index.getContext(ref);
+        referenceMatches.add(
+          ReferenceMatch(
+            location: ref,
+            context: context,
+          ),
+        );
+      }
+
+      symbolRefs.add(
+        SymbolReferences(
+          symbol: sym,
+          references: referenceMatches,
+          container: container,
+        ),
+      );
+    }
+
+    return AggregatedReferencesResult(
+      query: query,
+      symbolRefs: symbolRefs,
+    );
+  }
+
   Future<QueryResult> _findMembers(ScipQuery query) async {
-    final symbols = index
-        .findSymbols(query.target)
+    final symbols = _findMatchingSymbols(query)
         .where(
           (s) =>
               s.kindString == 'class' ||
@@ -190,7 +264,7 @@ class QueryExecutor {
   }
 
   Future<QueryResult> _findImplementations(ScipQuery query) async {
-    final symbols = index.findSymbols(query.target).toList();
+    final symbols = _findMatchingSymbols(query);
 
     if (symbols.isEmpty) {
       return NotFoundResult('No symbol found matching "${query.target}"');
@@ -203,7 +277,7 @@ class QueryExecutor {
   }
 
   Future<QueryResult> _findSupertypes(ScipQuery query) async {
-    final symbols = index.findSymbols(query.target).toList();
+    final symbols = _findMatchingSymbols(query);
 
     if (symbols.isEmpty) {
       return NotFoundResult('No symbol found matching "${query.target}"');
@@ -220,7 +294,7 @@ class QueryExecutor {
   }
 
   Future<QueryResult> _findSubtypes(ScipQuery query) async {
-    final symbols = index.findSymbols(query.target).toList();
+    final symbols = _findMatchingSymbols(query);
 
     if (symbols.isEmpty) {
       return NotFoundResult('No symbol found matching "${query.target}"');
@@ -237,7 +311,7 @@ class QueryExecutor {
   }
 
   Future<QueryResult> _findHierarchy(ScipQuery query) async {
-    final symbols = index.findSymbols(query.target).toList();
+    final symbols = _findMatchingSymbols(query);
 
     if (symbols.isEmpty) {
       return NotFoundResult('No symbol found matching "${query.target}"');
@@ -255,7 +329,7 @@ class QueryExecutor {
   }
 
   Future<QueryResult> _getSource(ScipQuery query) async {
-    final symbols = index.findSymbols(query.target).toList();
+    final symbols = _findMatchingSymbols(query);
 
     if (symbols.isEmpty) {
       return NotFoundResult('No symbol found matching "${query.target}"');
@@ -303,6 +377,55 @@ class QueryExecutor {
     return SearchResult(results.toList());
   }
 
+  /// Show all matches for a symbol (disambiguation).
+  Future<QueryResult> _which(ScipQuery query) async {
+    final matches = index.getMatchesWithContext(query.target);
+
+    if (matches.isEmpty) {
+      return NotFoundResult('No symbols found matching "${query.target}"');
+    }
+
+    final whichMatches = matches.map((m) {
+      return WhichMatch(
+        symbol: m.symbol,
+        location: m.definition?.file ?? m.symbol.file,
+        container: m.container,
+        line: m.definition?.line,
+      );
+    }).toList();
+
+    // Sort by kind priority, then by container name
+    whichMatches.sort((a, b) {
+      final kindPriority = {
+        'class': 0,
+        'function': 1,
+        'enum': 2,
+        'mixin': 3,
+        'method': 4,
+        'field': 5,
+        'constructor': 6,
+        'getter': 7,
+        'setter': 8,
+      };
+      final aPriority = kindPriority[a.symbol.kindString] ?? 10;
+      final bPriority = kindPriority[b.symbol.kindString] ?? 10;
+      if (aPriority != bPriority) return aPriority.compareTo(bPriority);
+
+      // Secondary sort by container (null last)
+      if (a.container == null && b.container != null) return 1;
+      if (a.container != null && b.container == null) return -1;
+      if (a.container != null && b.container != null) {
+        return a.container!.compareTo(b.container!);
+      }
+      return 0;
+    });
+
+    return WhichResult(
+      query: query.target,
+      matches: whichMatches,
+    );
+  }
+
   Future<QueryResult> _listFiles() async {
     return FilesResult(index.files.toList()..sort());
   }
@@ -311,4 +434,3 @@ class QueryExecutor {
     return StatsResult(index.stats);
   }
 }
-

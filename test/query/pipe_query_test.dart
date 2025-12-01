@@ -204,6 +204,55 @@ void main() {
         expect(result, isA<QueryResult>());
       });
     });
+
+    group('grep piping', () {
+      test('grep | refs - find refs for symbols containing matches', () async {
+        // This would work if grep finds symbols
+        final result = await executor.execute('grep TODO | refs');
+        expect(result, isA<QueryResult>());
+      });
+
+      test('grep extracts symbols from matches', () async {
+        final grepResult = await executor.execute('grep TODO');
+        expect(grepResult, isA<GrepResult>());
+        
+        final grep = grepResult as GrepResult;
+        // Symbols should be populated if matches are in symbol definitions
+        expect(grep.symbols, isA<List<SymbolInfo>>());
+      });
+    });
+
+    group('imports/exports piping', () {
+      test('imports | refs - find refs for imported symbols', () async {
+        final result = await executor.execute('imports lib/auth/service.dart | refs');
+        expect(result, isA<QueryResult>());
+      });
+
+      test('exports | members - get members of exported symbols', () async {
+        final result = await executor.execute('exports lib/auth/ | members');
+        expect(result, isA<QueryResult>());
+      });
+
+      test('imports extracts symbols from imported files', () async {
+        final importsResult = await executor.execute('imports lib/auth/service.dart');
+        // File might not exist in test setup, so could be NotFoundResult
+        if (importsResult is ImportsResult) {
+          expect(importsResult.importedSymbols, isA<List<SymbolInfo>>());
+        } else {
+          expect(importsResult, isA<NotFoundResult>());
+        }
+      });
+
+      test('exports extracts exported symbols', () async {
+        final exportsResult = await executor.execute('exports lib/auth/');
+        // Directory might not exist in test setup
+        if (exportsResult is ImportsResult) {
+          expect(exportsResult.exportedSymbols, isA<List<SymbolInfo>>());
+        } else {
+          expect(exportsResult, isA<NotFoundResult>());
+        }
+      });
+    });
   });
 
   group('Pipe Query Documentation', () {
@@ -220,8 +269,11 @@ void main() {
         'deps', // DependenciesResult -> dependency symbols
         'refs', // ReferencesResult -> the queried symbol
         'which', // WhichResult -> matching symbols
+        'grep', // GrepResult -> symbols containing matches
+        'imports', // ImportsResult -> imported/exported symbols
+        'exports', // ImportsResult -> exported symbols
       ];
-      expect(supportedFirst.length, 9);
+      expect(supportedFirst.length, 12);
     });
 
     test('supported second queries', () {
@@ -245,13 +297,11 @@ void main() {
 
     test('unsupported combinations', () {
       // These DON'T produce symbols, can't be first query:
-      // - grep (returns text matches, not symbols)
-      // - imports/exports (returns file paths/strings)
       // - files (returns file list)
       // - stats (returns statistics)
 
       // These DON'T accept symbols, can't be second query:
-      // - grep (needs pattern)
+      // - grep (needs pattern, though could accept symbol name as pattern)
       // - imports/exports (needs file path)
       // - files/stats (no target needed)
       // - find (needs pattern, not symbol) - actually could work

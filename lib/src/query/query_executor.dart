@@ -103,6 +103,8 @@ class QueryExecutor {
       ReferencesResult r => [r.symbol],
       AggregatedReferencesResult r => r.symbolRefs.map((sr) => sr.symbol).toList(),
       WhichResult r => r.matches.map((m) => m.symbol).toList(),
+      GrepResult r => r.symbols, // Symbols containing grep matches
+      ImportsResult r => [...r.importedSymbols, ...r.exportedSymbols],
       _ => <SymbolInfo>[],
     };
   }
@@ -582,9 +584,37 @@ class QueryExecutor {
       );
     }).toList();
 
+    // Extract symbols from matches
+    final symbols = <String, SymbolInfo>{};
+    for (final match in matches) {
+      if (match.symbolContext != null) {
+        // Try to find the symbol by name in the file
+        final fileSymbols = index.symbolsInFile(match.file);
+        for (final sym in fileSymbols) {
+          if (sym.name == match.symbolContext) {
+            symbols[sym.symbol] = sym;
+            break;
+          }
+        }
+      } else {
+        // Find symbols at the match line
+        final fileSymbols = index.symbolsInFile(match.file);
+        for (final sym in fileSymbols) {
+          final def = index.findDefinition(sym.symbol);
+          if (def != null &&
+              def.line <= match.line &&
+              (def.enclosingEndLine ?? def.line + 100) >= match.line) {
+            symbols[sym.symbol] = sym;
+            break;
+          }
+        }
+      }
+    }
+
     return GrepResult(
       pattern: query.target,
       matches: grepMatches,
+      symbols: symbols.values.toList(),
     );
   }
 
@@ -701,10 +731,43 @@ class QueryExecutor {
       exports.add(match.group(1)!);
     }
 
+    // Look up symbols from imported files
+    final importedSymbols = <SymbolInfo>[];
+    for (final importPath in imports) {
+      // Try to find the file in the index
+      // Import paths might be relative or package paths
+      String? resolvedPath;
+      
+      // Try direct match
+      if (index.files.contains(importPath)) {
+        resolvedPath = importPath;
+      } else {
+        // Try to find file with matching name
+        final fileName = importPath.split('/').last;
+        for (final file in index.files) {
+          if (file.endsWith(fileName)) {
+            resolvedPath = file;
+            break;
+          }
+        }
+      }
+
+      if (resolvedPath != null) {
+        importedSymbols.addAll(index.symbolsInFile(resolvedPath));
+      }
+    }
+
+    // Get exported symbols from this file
+    final exportedSymbols = index.symbolsInFile(filePath)
+        .where((sym) => !sym.name.startsWith('_')) // Public symbols only
+        .toList();
+
     return ImportsResult(
       file: filePath,
       imports: imports,
       exports: exports,
+      importedSymbols: importedSymbols,
+      exportedSymbols: exportedSymbols,
     );
   }
 
@@ -720,6 +783,7 @@ class QueryExecutor {
     }
 
     final exports = <String>[];
+    final exportedSymbols = <SymbolInfo>[];
 
     if (entityType == FileSystemEntityType.file) {
       // Single file - get its exports
@@ -728,6 +792,12 @@ class QueryExecutor {
       for (final match in exportRegex.allMatches(content)) {
         exports.add(match.group(1)!);
       }
+      // Get exported symbols from this file
+      exportedSymbols.addAll(
+        index.symbolsInFile(target).where(
+          (sym) => !sym.name.startsWith('_'), // Public symbols only
+        ),
+      );
     } else {
       // Directory - list public symbols defined in it
       for (final file in index.files) {
@@ -737,6 +807,7 @@ class QueryExecutor {
             // Only include top-level public symbols
             if (!sym.name.startsWith('_') && !sym.symbol.contains('#')) {
               exports.add('${sym.name} (${sym.kindString}) - $file');
+              exportedSymbols.add(sym);
             }
           }
         }
@@ -747,6 +818,7 @@ class QueryExecutor {
       file: target,
       imports: [], // Only exports for directory
       exports: exports,
+      exportedSymbols: exportedSymbols,
     );
   }
 

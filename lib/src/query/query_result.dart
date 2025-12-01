@@ -751,11 +751,15 @@ class ImportsResult extends QueryResult {
     required this.file,
     required this.imports,
     required this.exports,
+    this.importedSymbols = const [],
+    this.exportedSymbols = const [],
   });
 
   final String file;
-  final List<String> imports;
-  final List<String> exports;
+  final List<String> imports; // Import paths
+  final List<String> exports; // Export paths/names
+  final List<SymbolInfo> importedSymbols; // Symbols from imported files
+  final List<SymbolInfo> exportedSymbols; // Symbols exported from this file
 
   @override
   bool get isEmpty => imports.isEmpty && exports.isEmpty;
@@ -913,10 +917,12 @@ class GrepResult extends QueryResult {
   const GrepResult({
     required this.pattern,
     required this.matches,
+    this.symbols = const [],
   });
 
   final String pattern;
   final List<GrepMatch> matches;
+  final List<SymbolInfo> symbols; // Symbols containing the matches
 
   @override
   bool get isEmpty => matches.isEmpty;

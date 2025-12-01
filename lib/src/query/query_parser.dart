@@ -360,6 +360,8 @@ class ParsedPattern {
   }
 
   /// Convert to a RegExp for matching.
+  ///
+  /// Throws [FormatException] if the pattern is an invalid regex.
   RegExp toRegExp() {
     final regexPattern = switch (type) {
       PatternType.regex => pattern,
@@ -368,7 +370,11 @@ class ParsedPattern {
       PatternType.literal => RegExp.escape(pattern),
     };
 
-    return RegExp(regexPattern, caseSensitive: caseSensitive);
+    try {
+      return RegExp(regexPattern, caseSensitive: caseSensitive);
+    } on FormatException catch (e) {
+      throw FormatException('Invalid regex pattern: ${e.message}');
+    }
   }
 
   /// Convert glob pattern to regex.

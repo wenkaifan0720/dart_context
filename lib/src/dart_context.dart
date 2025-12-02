@@ -72,7 +72,10 @@ class DartContext {
       useCache: useCache,
     );
 
-    final executor = QueryExecutor(indexer.index);
+    final executor = QueryExecutor(
+      indexer.index,
+      signatureProvider: indexer.getSignature,
+    );
 
     return DartContext._(
       indexer: indexer,

@@ -107,6 +107,7 @@ dart_context --no-cache stats
 | `imports <file>` | What does this file import? |
 | `exports <path>` | What does this file/directory export? |
 | `deps <symbol>` | Dependencies of a symbol |
+| `sig <symbol>` | Get signature (without body) |
 | `files` | List all indexed files |
 | `stats` | Get index statistics |
 

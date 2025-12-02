@@ -345,6 +345,57 @@ class SearchResult extends QueryResult {
       };
 }
 
+/// Result containing symbol signature (without body).
+///
+/// Signatures show the declaration without implementation details:
+/// - Classes: full class with method signatures (bodies as `{}`)
+/// - Methods: `Future<User> login(String email, String password) {}`
+/// - Fields: `final String name;`
+///
+/// Useful for quick API exploration without reading full source.
+class SignatureResult extends QueryResult {
+  const SignatureResult({
+    required this.symbol,
+    required this.signature,
+    required this.file,
+    required this.line,
+  });
+
+  final SymbolInfo symbol;
+  final String signature;
+  final String file;
+  final int line;
+
+  @override
+  bool get isEmpty => signature.isEmpty;
+
+  @override
+  int get count => 1;
+
+  @override
+  String toText() {
+    final buffer = StringBuffer();
+    buffer.writeln('## ${symbol.name} (${symbol.kindString})');
+    buffer.writeln('File: $file:${line + 1}');
+    buffer.writeln('');
+    buffer.writeln('```dart');
+    buffer.writeln(signature);
+    buffer.writeln('```');
+    return buffer.toString().trimRight();
+  }
+
+  @override
+  Map<String, dynamic> toJson() => {
+        'type': 'signature',
+        'symbol': symbol.symbol,
+        'name': symbol.name,
+        'kind': symbol.kindString,
+        'file': file,
+        'line': line + 1,
+        'signature': signature,
+      };
+}
+
 /// Result containing source code.
 class SourceResult extends QueryResult {
   const SourceResult({

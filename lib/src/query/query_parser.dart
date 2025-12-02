@@ -17,6 +17,7 @@
 /// - `imports <file>` - What does this file import?
 /// - `exports <file>` - What does this file/directory export?
 /// - `deps <symbol>` - Dependencies of a symbol
+/// - `sig <symbol>` - Get signature (without body)
 ///
 /// Qualified names:
 /// - `refs MyClass.login` - References to login method in MyClass
@@ -43,6 +44,7 @@
 /// - `calls AuthService.login`
 /// - `callers validateUser`
 /// - `imports lib/auth/service.dart`
+/// - `sig AuthService.login` - Get method signature
 /// - `find Auth* kind:class | members`
 library;
 
@@ -185,6 +187,7 @@ class ScipQuery {
       'imports' => QueryAction.imports,
       'exports' => QueryAction.exports,
       'deps' || 'dependencies' => QueryAction.deps,
+      'sig' || 'signature' => QueryAction.signature,
       'files' => QueryAction.files,
       'stats' => QueryAction.stats,
       _ => throw FormatException('Unknown action: $action'),
@@ -301,6 +304,9 @@ enum QueryAction {
 
   /// Dependencies of a symbol.
   deps,
+
+  /// Get signature (without body).
+  signature,
 
   /// List all indexed files.
   files,

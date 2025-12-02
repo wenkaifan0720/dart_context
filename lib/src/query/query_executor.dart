@@ -46,10 +46,18 @@ import 'query_result.dart';
 ///   print('Symbol not found');
 /// }
 /// ```
+/// Function type for getting signatures from the analyzer.
+typedef SignatureProvider = Future<String?> Function(String symbolId);
+
 class QueryExecutor {
-  QueryExecutor(this.index);
+  QueryExecutor(this.index, {this.signatureProvider});
 
   final ScipIndex index;
+
+  /// Optional provider for generating signatures using the analyzer.
+  /// If not provided, `sig` queries will fall back to extracting
+  /// signatures from source code heuristically.
+  final SignatureProvider? signatureProvider;
 
   /// Execute a query string and return the result.
   ///
@@ -225,6 +233,7 @@ class QueryExecutor {
       QueryAction.imports => _findImports(query),
       QueryAction.exports => _findExports(query),
       QueryAction.deps => _findDeps(query),
+      QueryAction.signature => _getSignatureResult(query),
       QueryAction.files => _listFiles(),
       QueryAction.stats => _getStats(),
     };
@@ -549,6 +558,126 @@ class QueryExecutor {
       file: def.file,
       startLine: def.line,
     );
+  }
+
+  /// Get signature for a symbol (declaration without body).
+  Future<QueryResult> _getSignatureResult(ScipQuery query) async {
+    final symbols = _findMatchingSymbols(query);
+
+    if (symbols.isEmpty) {
+      return NotFoundResult('No symbol found matching "${query.target}"');
+    }
+
+    final sym = symbols.first;
+    final def = index.findDefinition(sym.symbol);
+
+    if (def == null) {
+      return NotFoundResult(
+        'Symbol "${query.target}" has no definition (may be external)',
+      );
+    }
+
+    // Try using the signature provider (analyzer-based) first
+    String? signature;
+    if (signatureProvider != null) {
+      signature = await signatureProvider!(sym.symbol);
+    }
+
+    // Fallback: extract from source heuristically
+    if (signature == null) {
+      signature = await _extractSignatureFromSource(sym, def);
+    }
+
+    if (signature == null) {
+      return NotFoundResult('Could not extract signature for "${query.target}"');
+    }
+
+    return SignatureResult(
+      symbol: sym,
+      signature: signature,
+      file: def.file,
+      line: def.line,
+    );
+  }
+
+  /// Extract signature from source code heuristically (fallback).
+  Future<String?> _extractSignatureFromSource(
+    SymbolInfo sym,
+    OccurrenceInfo def,
+  ) async {
+    final source = await index.getSource(sym.symbol);
+    if (source == null) return null;
+
+    final lines = source.split('\n');
+    if (lines.isEmpty) return null;
+
+    final kind = sym.kind;
+
+    // For classes/enums/mixins - extract declaration + " { ... }"
+    if (kind == scip.SymbolInformation_Kind.Class ||
+        kind == scip.SymbolInformation_Kind.Enum ||
+        kind == scip.SymbolInformation_Kind.Mixin ||
+        kind == scip.SymbolInformation_Kind.Extension) {
+      // Find the opening brace
+      final fullSource = lines.join('\n');
+      final braceIndex = fullSource.indexOf('{');
+      if (braceIndex != -1) {
+        return '${fullSource.substring(0, braceIndex + 1)} ... }';
+      }
+      return '${lines.first} { ... }';
+    }
+
+    // For methods/functions - extract up to the body
+    if (kind == scip.SymbolInformation_Kind.Method ||
+        kind == scip.SymbolInformation_Kind.Function ||
+        kind == scip.SymbolInformation_Kind.Constructor) {
+      final buffer = StringBuffer();
+      var foundCloseParen = false;
+
+      for (final line in lines) {
+        for (var i = 0; i < line.length; i++) {
+          final char = line[i];
+
+          if (char == ')') {
+            foundCloseParen = true;
+          }
+
+          // Stop at body start
+          if (foundCloseParen) {
+            if (char == '{' ||
+                (char == '=' && i + 1 < line.length && line[i + 1] == '>')) {
+              return buffer.toString().trim();
+            }
+            if (char == ';') {
+              buffer.write(char);
+              return buffer.toString().trim();
+            }
+          }
+
+          buffer.write(char);
+        }
+        buffer.write('\n');
+      }
+      return buffer.toString().trim();
+    }
+
+    // For getters/setters
+    if (kind == scip.SymbolInformation_Kind.Getter ||
+        kind == scip.SymbolInformation_Kind.Setter) {
+      final line = lines.first;
+      final arrowIndex = line.indexOf('=>');
+      final braceIndex = line.indexOf('{');
+
+      if (arrowIndex != -1 && (braceIndex == -1 || arrowIndex < braceIndex)) {
+        return line.substring(0, arrowIndex).trim();
+      }
+      if (braceIndex != -1) {
+        return line.substring(0, braceIndex).trim();
+      }
+    }
+
+    // Default: return first line
+    return lines.first.trim();
   }
 
   Future<QueryResult> _search(ScipQuery query) async {

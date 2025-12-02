@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:analyzer/dart/analysis/analysis_context_collection.dart';
 import 'package:analyzer/dart/analysis/results.dart';
+import 'package:analyzer/dart/ast/ast.dart';
 import 'package:crypto/crypto.dart';
 import 'package:package_config/package_config.dart';
 import 'package:path/path.dart' as p;
@@ -13,6 +14,7 @@ import 'package:scip_dart/src/gen/scip.pb.dart' as scip;
 import 'package:scip_dart/src/scip_visitor.dart';
 
 import '../adapters/analyzer_adapter.dart';
+import '../analyzer/signature_visitor.dart';
 import 'index_cache.dart';
 import 'scip_index.dart';
 
@@ -600,6 +602,85 @@ class IncrementalScipIndexer {
   Future<void> refreshAll() async {
     _fileHashes.clear();
     await _indexAll();
+  }
+
+  /// Get the signature of a symbol using the analyzer.
+  ///
+  /// This parses the file and uses [SignatureVisitor] to generate
+  /// a clean signature with method bodies replaced by `{}`.
+  ///
+  /// Returns `null` if the symbol or file cannot be found.
+  Future<String?> getSignature(String symbolId) async {
+    final sym = _index.getSymbol(symbolId);
+    if (sym == null || sym.file == null) return null;
+
+    final def = _index.findDefinition(symbolId);
+    if (def == null) return null;
+
+    final filePath = p.join(_projectRoot, sym.file!);
+    final result = await _getResolvedUnit(filePath);
+    if (result == null) return null;
+
+    // Find the AST node at the definition location
+    final node = _findNodeAtLocation(result.unit, def.line, def.column);
+    if (node == null) return null;
+
+    // Walk up to find the declaration
+    final declaration = _findContainingDeclaration(node);
+    if (declaration == null) return null;
+
+    // Generate signature
+    return generateSignature(declaration);
+  }
+
+  /// Find AST node at a specific line and column.
+  AstNode? _findNodeAtLocation(CompilationUnit unit, int line, int column) {
+    AstNode? result;
+
+    void visit(AstNode node) {
+      final lineInfo = unit.lineInfo;
+      final nodeStart = lineInfo.getLocation(node.offset);
+      final nodeEnd = lineInfo.getLocation(node.end);
+
+      // Check if the target location is within this node
+      if ((nodeStart.lineNumber - 1 <= line && line <= nodeEnd.lineNumber - 1)) {
+        result = node;
+        // Continue to find more specific child nodes
+        for (final child in node.childEntities) {
+          if (child is AstNode) {
+            visit(child);
+          }
+        }
+      }
+    }
+
+    for (final declaration in unit.declarations) {
+      visit(declaration);
+    }
+
+    return result;
+  }
+
+  /// Walk up the AST to find the containing declaration.
+  AstNode? _findContainingDeclaration(AstNode node) {
+    AstNode? current = node;
+
+    while (current != null) {
+      if (current is ClassDeclaration ||
+          current is MixinDeclaration ||
+          current is ExtensionDeclaration ||
+          current is EnumDeclaration ||
+          current is FunctionDeclaration ||
+          current is MethodDeclaration ||
+          current is ConstructorDeclaration ||
+          current is FieldDeclaration ||
+          current is TopLevelVariableDeclaration) {
+        return current;
+      }
+      current = current.parent;
+    }
+
+    return node;
   }
 
   /// Stop watching and clean up resources.

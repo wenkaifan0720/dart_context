@@ -247,7 +247,7 @@ base mixin DartContextSupport on ToolsSupport, RootsTrackingSupport {
 | `-L` | Files without matches | `grep TODO -L` |
 | `-c` | Count per file | `grep error -c` |
 | `-o` | Only matching text | `grep /\\w+Error/ -o` |
-| `-F` | Fixed strings (literal) | `grep -F '$variable'` |
+| `-F` | Fixed strings (literal) | `grep -F '\$variable'` |
 | `-M` | Multiline matching | `grep /class.*\\{/ -M` |
 | `-C:n` | Context lines | `grep TODO -C:3` |
 | `-A:n` | Lines after | `grep error -A:5` |

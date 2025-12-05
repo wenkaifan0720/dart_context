@@ -478,71 +478,143 @@ class ScipIndex {
   /// Parameters:
   /// - [pattern]: The regex pattern to search for
   /// - [pathFilter]: Only search in files starting with this path
+  /// - [includeGlob]: Only include files matching this glob (e.g., "*.dart")
+  /// - [excludeGlob]: Exclude files matching this glob (e.g., "*_test.dart")
   /// - [linesBefore]: Number of context lines before match (default 2)
   /// - [linesAfter]: Number of context lines after match (default 2)
   /// - [invertMatch]: If true, return lines that DON'T match
   /// - [maxPerFile]: Maximum matches per file (null for unlimited)
+  /// - [multiline]: If true, match patterns across multiple lines
+  /// - [onlyMatching]: If true, return only the matched text (not full line)
   Future<List<GrepMatchData>> grep(
     RegExp pattern, {
     String? pathFilter,
+    String? includeGlob,
+    String? excludeGlob,
     int linesBefore = 2,
     int linesAfter = 2,
     bool invertMatch = false,
     int? maxPerFile,
+    bool multiline = false,
+    bool onlyMatching = false,
   }) async {
     final results = <GrepMatchData>[];
+
+    // Compile glob patterns if provided
+    final includeRegex = includeGlob != null ? _globToRegex(includeGlob) : null;
+    final excludeRegex = excludeGlob != null ? _globToRegex(excludeGlob) : null;
 
     for (final path in _documentIndex.keys) {
       // Apply path filter
       if (pathFilter != null && !path.startsWith(pathFilter)) continue;
+
+      // Apply include glob
+      if (includeRegex != null && !includeRegex.hasMatch(path)) continue;
+
+      // Apply exclude glob
+      if (excludeRegex != null && excludeRegex.hasMatch(path)) continue;
 
       final filePath = '$_projectRoot/$path';
       final file = File(filePath);
       if (!await file.exists()) continue;
 
       final content = await file.readAsString();
-      final lines = content.split('\n');
-      var fileMatchCount = 0;
 
-      // Find all matches (or non-matches for -v)
-      for (var lineIdx = 0; lineIdx < lines.length; lineIdx++) {
-        final line = lines[lineIdx];
-        final hasMatch = pattern.hasMatch(line);
+      if (multiline) {
+        // Multiline matching - search across the entire content
+        final fileResults = _grepMultiline(
+          path,
+          content,
+          pattern,
+          linesBefore: linesBefore,
+          linesAfter: linesAfter,
+          maxPerFile: maxPerFile,
+          onlyMatching: onlyMatching,
+        );
+        results.addAll(fileResults);
+      } else {
+        // Line-by-line matching
+        final fileResults = _grepLines(
+          path,
+          content,
+          pattern,
+          linesBefore: linesBefore,
+          linesAfter: linesAfter,
+          invertMatch: invertMatch,
+          maxPerFile: maxPerFile,
+          onlyMatching: onlyMatching,
+        );
+        results.addAll(fileResults);
+      }
+    }
 
-        // For invert match, we want lines that DON'T match
-        final shouldInclude = invertMatch ? !hasMatch : hasMatch;
-        if (!shouldInclude) continue;
+    return results;
+  }
 
-        // Check max per file limit
-        if (maxPerFile != null && fileMatchCount >= maxPerFile) break;
-        fileMatchCount++;
+  /// Line-by-line grep (standard mode).
+  List<GrepMatchData> _grepLines(
+    String path,
+    String content,
+    RegExp pattern, {
+    required int linesBefore,
+    required int linesAfter,
+    required bool invertMatch,
+    required int? maxPerFile,
+    required bool onlyMatching,
+  }) {
+    final results = <GrepMatchData>[];
+    final lines = content.split('\n');
+    var fileMatchCount = 0;
 
-        // Get context lines (separate before/after)
-        final startCtx = (lineIdx - linesBefore).clamp(0, lines.length);
-        final endCtx = (lineIdx + linesAfter + 1).clamp(0, lines.length);
-        final context = lines.sublist(startCtx, endCtx);
+    for (var lineIdx = 0; lineIdx < lines.length; lineIdx++) {
+      final line = lines[lineIdx];
+      final allMatches = pattern.allMatches(line).toList();
+      final hasMatch = allMatches.isNotEmpty;
 
-        // For invert match, the "match" is the whole line
-        final matchText = invertMatch ? line : _getFirstMatch(pattern, line);
+      // For invert match, we want lines that DON'T match
+      final shouldInclude = invertMatch ? !hasMatch : hasMatch;
+      if (!shouldInclude) continue;
 
-        // Find containing symbol
-        String? symbolContext;
-        final fileSymbols = this.symbolsInFile(path).toList();
-        for (final sym in fileSymbols) {
-          final def = findDefinition(sym.symbol);
-          if (def != null &&
-              def.line <= lineIdx &&
-              (def.enclosingEndLine ?? def.line + 100) >= lineIdx) {
-            symbolContext = sym.name;
-            break;
-          }
+      // Check max per file limit
+      if (maxPerFile != null && fileMatchCount >= maxPerFile) break;
+
+      // Get context lines
+      final startCtx = (lineIdx - linesBefore).clamp(0, lines.length);
+      final endCtx = (lineIdx + linesAfter + 1).clamp(0, lines.length);
+      final context = lines.sublist(startCtx, endCtx);
+
+      // Find containing symbol
+      final symbolContext = _findSymbolContext(path, lineIdx);
+
+      if (onlyMatching && !invertMatch) {
+        // Return each match separately
+        for (final match in allMatches) {
+          fileMatchCount++;
+          if (maxPerFile != null && fileMatchCount > maxPerFile) break;
+
+          results.add(
+            GrepMatchData(
+              file: path,
+              line: lineIdx,
+              column: match.start,
+              matchText: match.group(0) ?? '',
+              contextLines: const [], // No context for -o mode
+              contextBefore: 0,
+              symbolContext: symbolContext,
+            ),
+          );
         }
+      } else {
+        fileMatchCount++;
+        final matchText = invertMatch
+            ? line
+            : (allMatches.isNotEmpty ? allMatches.first.group(0) ?? line : line);
 
         results.add(
           GrepMatchData(
             file: path,
             line: lineIdx,
-            column: invertMatch ? 0 : pattern.firstMatch(line)?.start ?? 0,
+            column: invertMatch ? 0 : (allMatches.firstOrNull?.start ?? 0),
             matchText: matchText,
             contextLines: context,
             contextBefore: lineIdx - startCtx,
@@ -555,10 +627,142 @@ class ScipIndex {
     return results;
   }
 
-  /// Get the first match text from a line.
-  String _getFirstMatch(RegExp pattern, String line) {
-    final match = pattern.firstMatch(line);
-    return match?.group(0) ?? line;
+  /// Multiline grep (matches across line boundaries).
+  List<GrepMatchData> _grepMultiline(
+    String path,
+    String content,
+    RegExp pattern, {
+    required int linesBefore,
+    required int linesAfter,
+    required int? maxPerFile,
+    required bool onlyMatching,
+  }) {
+    final results = <GrepMatchData>[];
+    final lines = content.split('\n');
+
+    // Build line offset map for converting byte offsets to line numbers
+    final lineOffsets = <int>[0];
+    for (var i = 0; i < content.length; i++) {
+      if (content[i] == '\n') {
+        lineOffsets.add(i + 1);
+      }
+    }
+
+    int offsetToLine(int offset) {
+      for (var i = lineOffsets.length - 1; i >= 0; i--) {
+        if (lineOffsets[i] <= offset) return i;
+      }
+      return 0;
+    }
+
+    final allMatches = pattern.allMatches(content).toList();
+    var matchCount = 0;
+
+    for (final match in allMatches) {
+      if (maxPerFile != null && matchCount >= maxPerFile) break;
+      matchCount++;
+
+      final startLine = offsetToLine(match.start);
+      final endLine = offsetToLine(match.end);
+      final matchText = match.group(0) ?? '';
+
+      // Get context
+      final startCtx = (startLine - linesBefore).clamp(0, lines.length);
+      final endCtx = (endLine + linesAfter + 1).clamp(0, lines.length);
+      final context = onlyMatching ? const <String>[] : lines.sublist(startCtx, endCtx);
+
+      final symbolContext = _findSymbolContext(path, startLine);
+
+      results.add(
+        GrepMatchData(
+          file: path,
+          line: startLine,
+          column: match.start - lineOffsets[startLine],
+          matchText: onlyMatching ? matchText : matchText,
+          contextLines: context,
+          contextBefore: startLine - startCtx,
+          symbolContext: symbolContext,
+          matchLineCount: endLine - startLine + 1,
+        ),
+      );
+    }
+
+    return results;
+  }
+
+  /// Find the symbol containing a line.
+  String? _findSymbolContext(String path, int lineIdx) {
+    final fileSymbols = symbolsInFile(path).toList();
+    for (final sym in fileSymbols) {
+      final def = findDefinition(sym.symbol);
+      if (def != null &&
+          def.line <= lineIdx &&
+          (def.enclosingEndLine ?? def.line + 100) >= lineIdx) {
+        return sym.name;
+      }
+    }
+    return null;
+  }
+
+  /// Convert a simple glob pattern to a regex.
+  RegExp _globToRegex(String glob) {
+    final escaped = StringBuffer();
+    for (var i = 0; i < glob.length; i++) {
+      final char = glob[i];
+      switch (char) {
+        case '*':
+          escaped.write('.*');
+        case '?':
+          escaped.write('.');
+        case '.':
+        case '+':
+        case '^':
+        case r'$':
+        case '(':
+        case ')':
+        case '[':
+        case ']':
+        case '{':
+        case '}':
+        case '|':
+        case r'\':
+          escaped.write(r'\');
+          escaped.write(char);
+        default:
+          escaped.write(char);
+      }
+    }
+    return RegExp(escaped.toString(), caseSensitive: false);
+  }
+
+  /// Get files that contain NO matches for the pattern.
+  Future<List<String>> grepFilesWithoutMatch(
+    RegExp pattern, {
+    String? pathFilter,
+    String? includeGlob,
+    String? excludeGlob,
+  }) async {
+    final filesWithoutMatch = <String>[];
+
+    final includeRegex = includeGlob != null ? _globToRegex(includeGlob) : null;
+    final excludeRegex = excludeGlob != null ? _globToRegex(excludeGlob) : null;
+
+    for (final path in _documentIndex.keys) {
+      if (pathFilter != null && !path.startsWith(pathFilter)) continue;
+      if (includeRegex != null && !includeRegex.hasMatch(path)) continue;
+      if (excludeRegex != null && excludeRegex.hasMatch(path)) continue;
+
+      final filePath = '$_projectRoot/$path';
+      final file = File(filePath);
+      if (!await file.exists()) continue;
+
+      final content = await file.readAsString();
+      if (!pattern.hasMatch(content)) {
+        filesWithoutMatch.add(path);
+      }
+    }
+
+    return filesWithoutMatch..sort();
   }
 
   /// Search for symbols using fuzzy matching.
@@ -896,6 +1100,7 @@ class GrepMatchData {
     required this.contextLines,
     required this.contextBefore,
     this.symbolContext,
+    this.matchLineCount = 1,
   });
 
   final String file;
@@ -905,5 +1110,8 @@ class GrepMatchData {
   final List<String> contextLines;
   final int contextBefore;
   final String? symbolContext;
+
+  /// Number of lines the match spans (for multiline matches).
+  final int matchLineCount;
 }
 

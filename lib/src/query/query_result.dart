@@ -1074,6 +1074,10 @@ class GrepResult extends QueryResult {
     buffer.writeln('## Grep: $pattern (${matches.length} matches)');
     buffer.writeln('');
 
+    // Check if this is -o (only matching) mode - context lines will be empty
+    final isOnlyMatching =
+        matches.isNotEmpty && matches.first.contextLines.isEmpty;
+
     // Group by file
     final byFile = <String, List<GrepMatch>>{};
     for (final match in matches) {
@@ -1084,18 +1088,29 @@ class GrepResult extends QueryResult {
       buffer.writeln('### ${entry.key} (${entry.value.length} matches)');
       buffer.writeln('');
 
-      for (final match in entry.value) {
-        // Show context with line numbers (grep-style)
-        final lines = match.contextLines;
-        for (var i = 0; i < lines.length; i++) {
-          final lineNum = match.startLine - match.contextBefore + i + 1;
-          final isMatchLine = i >= match.contextBefore &&
-              i < match.contextBefore + match.matchLineCount;
-          final prefix = isMatchLine ? '>' : ' ';
-          buffer
-              .writeln('$prefix${lineNum.toString().padLeft(4)}| ${lines[i]}');
+      if (isOnlyMatching) {
+        // -o mode: just show the matched text, one per line
+        for (final match in entry.value) {
+          buffer.writeln(
+            '${(match.line + 1).toString().padLeft(4)}:${match.column + 1}: ${match.matchText}',
+          );
         }
         buffer.writeln('');
+      } else {
+        // Normal mode: show context with line numbers
+        for (final match in entry.value) {
+          final lines = match.contextLines;
+          for (var i = 0; i < lines.length; i++) {
+            final lineNum = match.startLine - match.contextBefore + i + 1;
+            final isMatchLine = i >= match.contextBefore &&
+                i < match.contextBefore + match.matchLineCount;
+            final prefix = isMatchLine ? '>' : ' ';
+            buffer.writeln(
+              '$prefix${lineNum.toString().padLeft(4)}| ${lines[i]}',
+            );
+          }
+          buffer.writeln('');
+        }
       }
     }
 
@@ -1146,17 +1161,21 @@ class GrepMatch {
   int get startLine => line - contextBefore;
 }
 
-/// Result for grep with -l flag (files only).
+/// Result for grep with -l flag (files only) or -L flag (files without match).
 ///
-/// Only shows filenames that contain matches, like `grep -l`.
+/// Shows filenames that contain matches (-l) or don't contain matches (-L).
 class GrepFilesResult extends QueryResult {
   const GrepFilesResult({
     required this.pattern,
     required this.files,
+    this.isWithoutMatch = false,
   });
 
   final String pattern;
   final List<String> files;
+
+  /// If true, these are files that DON'T match (-L flag).
+  final bool isWithoutMatch;
 
   @override
   bool get isEmpty => files.isEmpty;
@@ -1166,12 +1185,15 @@ class GrepFilesResult extends QueryResult {
 
   @override
   String toText() {
+    final matchType = isWithoutMatch ? 'without' : 'matching';
     if (files.isEmpty) {
-      return 'No files match pattern "$pattern".';
+      return 'No files $matchType pattern "$pattern".';
     }
 
     final buffer = StringBuffer();
-    buffer.writeln('## Files matching: $pattern (${files.length} files)');
+    buffer.writeln(
+      '## Files $matchType: $pattern (${files.length} files)',
+    );
     buffer.writeln('');
     for (final file in files) {
       buffer.writeln(file);
@@ -1181,10 +1203,11 @@ class GrepFilesResult extends QueryResult {
 
   @override
   Map<String, dynamic> toJson() => {
-        'type': 'grep_files',
+        'type': isWithoutMatch ? 'grep_files_without' : 'grep_files',
         'pattern': pattern,
         'files': files,
         'count': files.length,
+        'isWithoutMatch': isWithoutMatch,
       };
 }
 

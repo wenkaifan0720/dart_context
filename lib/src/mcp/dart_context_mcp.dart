@@ -194,7 +194,8 @@ base mixin DartContextSupport on ToolsSupport, RootsTrackingSupport {
   /// The dart_query tool definition.
   static final dartQueryTool = Tool(
     name: 'dart_query',
-    description: '''Query Dart codebase for semantic information using a simple DSL.
+    description:
+        '''Query Dart codebase for semantic information using a simple DSL.
 
 ## Query Commands
 
@@ -242,12 +243,18 @@ base mixin DartContextSupport on ToolsSupport, RootsTrackingSupport {
 | `-i` | Case insensitive | `grep error -i` |
 | `-v` | Invert match (non-matching) | `grep TODO -v` |
 | `-w` | Word boundary | `grep test -w` |
-| `-l` | Files only | `grep TODO -l` |
+| `-l` | Files with matches | `grep TODO -l` |
+| `-L` | Files without matches | `grep TODO -L` |
 | `-c` | Count per file | `grep error -c` |
+| `-o` | Only matching text | `grep /\\w+Error/ -o` |
+| `-F` | Fixed strings (literal) | `grep -F '$variable'` |
+| `-M` | Multiline matching | `grep /class.*\\{/ -M` |
 | `-C:n` | Context lines | `grep TODO -C:3` |
 | `-A:n` | Lines after | `grep error -A:5` |
 | `-B:n` | Lines before | `grep error -B:2` |
 | `-m:n` | Max matches | `grep TODO -m:10` |
+| `--include:glob` | Only matching files | `grep error --include:*.dart` |
+| `--exclude:glob` | Skip matching files | `grep TODO --exclude:test/*` |
 
 Kinds: class, method, function, field, enum, mixin, extension, getter, setter, constructor
 
@@ -290,5 +297,3 @@ Semantic code navigation - understands definitions, references, types, call grap
     ),
   );
 }
-
-

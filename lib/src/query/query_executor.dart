@@ -940,25 +940,58 @@ class QueryExecutor {
   Future<QueryResult> _grep(ScipQuery query) async {
     final pattern = query.parsedPattern;
 
-    // Handle word boundary flag (-w)
-    RegExp regex;
-    if (query.wordBoundary) {
-      // Wrap pattern in word boundaries
-      final wordPattern = r'\b' + pattern.pattern + r'\b';
-      regex = RegExp(wordPattern, caseSensitive: pattern.caseSensitive);
+    // Build the regex pattern
+    String regexPattern;
+    bool caseSensitive = pattern.caseSensitive;
+
+    if (query.fixedStrings) {
+      // -F: Treat pattern as literal string
+      regexPattern = RegExp.escape(query.target);
+    } else if (query.wordBoundary) {
+      // -w: Wrap pattern in word boundaries
+      regexPattern = r'\b' + pattern.pattern + r'\b';
     } else {
-      regex = pattern.toRegExp();
+      regexPattern = pattern.type == PatternType.regex
+          ? pattern.pattern
+          : pattern.toRegExp().pattern;
     }
 
+    // Handle multiline flag
+    final regex = RegExp(
+      regexPattern,
+      caseSensitive: caseSensitive,
+      multiLine: query.multiline,
+      dotAll: query.multiline, // Make . match newlines in multiline mode
+    );
+
     final pathFilter = query.pathFilter;
+
+    // Handle -L (files without match)
+    if (query.filesWithoutMatch) {
+      final files = await index.grepFilesWithoutMatch(
+        regex,
+        pathFilter: pathFilter,
+        includeGlob: query.includeGlob,
+        excludeGlob: query.excludeGlob,
+      );
+      return GrepFilesResult(
+        pattern: query.target,
+        files: files,
+        isWithoutMatch: true,
+      );
+    }
 
     final matches = await index.grep(
       regex,
       pathFilter: pathFilter,
+      includeGlob: query.includeGlob,
+      excludeGlob: query.excludeGlob,
       linesBefore: query.linesBefore,
       linesAfter: query.linesAfter,
       invertMatch: query.invertMatch,
       maxPerFile: query.maxCount,
+      multiline: query.multiline,
+      onlyMatching: query.onlyMatching,
     );
 
     // Handle files-only output (-l)
@@ -991,6 +1024,7 @@ class QueryExecutor {
         contextLines: m.contextLines,
         contextBefore: m.contextBefore,
         symbolContext: m.symbolContext,
+        matchLineCount: m.matchLineCount,
       );
     }).toList();
 

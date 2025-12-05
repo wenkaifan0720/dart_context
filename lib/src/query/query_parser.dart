@@ -32,11 +32,17 @@
 /// - `-v` - Invert match (show non-matching lines)
 /// - `-w` - Word boundary (match whole words)
 /// - `-l` - Files only (just show filenames)
+/// - `-L` - Files without match (show files that don't match)
 /// - `-c` - Count only (count matches per file)
+/// - `-o` - Only matching (show just the matched text)
+/// - `-F` - Fixed strings (treat pattern as literal, not regex)
+/// - `-M` - Multiline (match patterns across lines)
 /// - `-C:n` - Context lines (before and after)
 /// - `-A:n` - Lines after match
 /// - `-B:n` - Lines before match
 /// - `-m:n` - Max matches (stop after n matches)
+/// - `--include:*.dart` - Only search files matching glob
+/// - `--exclude:*_test.dart` - Skip files matching glob
 ///
 /// Pattern syntax:
 /// - `Auth*` - Glob pattern (wildcard)
@@ -103,17 +109,20 @@ class ScipQuery {
     for (var i = 1; i < tokens.length; i++) {
       final token = tokens[i];
 
-      // Handle grep-style flags like -i, -C:5, -A:3
+      // Handle grep-style flags like -i, -C:5, --exclude:pattern
       if (token.startsWith('-') && token.length >= 2) {
-        final flagPart = token.substring(1);
+        // Handle -- prefix (e.g., --exclude:pattern)
+        final flagPart = token.startsWith('--')
+            ? token.substring(2)
+            : token.substring(1);
         if (flagPart.contains(':')) {
-          // Flag with value: -C:5
+          // Flag with value: -C:5 or --exclude:pattern
           final colonIndex = flagPart.indexOf(':');
           final key = flagPart.substring(0, colonIndex);
           final value = flagPart.substring(colonIndex + 1);
           filters[key] = value;
         } else {
-          // Boolean flag: -i
+          // Boolean flag: -i or --verbose
           filters[flagPart] = 'true';
         }
       } else if (token.contains(':')) {
@@ -278,6 +287,24 @@ class ScipQuery {
     if (value == null) return null;
     return int.tryParse(value);
   }
+
+  /// Check if only-matching output (-o).
+  bool get onlyMatching => filters.containsKey('o');
+
+  /// Check if fixed strings mode (-F). Treats pattern as literal.
+  bool get fixedStrings => filters.containsKey('F');
+
+  /// Check if files-without-match mode (-L).
+  bool get filesWithoutMatch => filters.containsKey('L');
+
+  /// Check if multiline mode (-M). Matches across lines.
+  bool get multiline => filters.containsKey('M');
+
+  /// Get include glob pattern (--include:*.dart).
+  String? get includeGlob => filters['include'];
+
+  /// Get exclude glob pattern (--exclude:*_test.dart).
+  String? get excludeGlob => filters['exclude'];
 
   /// Parse the target as a pattern.
   ParsedPattern get parsedPattern => ParsedPattern.parse(

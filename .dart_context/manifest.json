@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "createdAt": "2025-12-05T20:45:55.338646",
+  "createdAt": "2025-12-05T21:00:03.482779",
   "projectRoot": "/Users/wenkaifan/Dev/dart_context",
   "fileHashes": {
     "test/integration/incremental_indexer_test.dart": "6bd65564a1baf68e0a065d74a0296ad377927206e2fc07f3fa8300599309d1c0",
@@ -20,16 +20,16 @@
     "example/example.dart": "912a8b494e29478a86a23d97b26d0aa996c48a4284e036dfd65decff0f0d2ed4",
     "lib/dart_context_mcp.dart": "c7e9857e2f98cd798b7ee595e3ded655cc57e2a2e191ad212237e29d5c145354",
     "lib/dart_context.dart": "354e731385aca2f82adb51c127c1cd0dac51331597d036cae1ffc96a0fc5c4e1",
-    "lib/src/mcp/dart_context_mcp.dart": "b5b13198fb022539b4552855d47eff23ad80cfb35b4ca2d0a84106e704f0f1a5",
+    "lib/src/mcp/dart_context_mcp.dart": "d3be311ea8b94bd1f364b98bf13201314bec70c2bfb2f24048e1f3fcd5f7e762",
     "lib/src/dart_context.dart": "fc7e09e98ce512e907b75d7694579c4cf3c57b0952426631be9657d601cfbc8e",
     "lib/src/adapters/hologram_adapter.dart": "2d1bea2bcd8cece8b53b43b1869a5471f4f568fd77902ec4692aa2353c7f77f7",
     "lib/src/adapters/analyzer_adapter.dart": "26db35d2e2cfcb4fc0d3b12b75cf0574344b56c799c598e50f7c34922b33f247",
     "lib/src/index/index_cache.dart": "5daabed8de8558eada8537a9c885d7b8bcbc86fbfb01a9b80fb1ea0083a8f4aa",
-    "lib/src/index/scip_index.dart": "4f470eee82f065e52f96751f8bb5be36206133f0b18aac424c222ae2fff9af2a",
+    "lib/src/index/scip_index.dart": "b9e574a6f466f9601a98335152a02a9018a13b4713e08c5c5b09255e0e092a44",
     "lib/src/index/incremental_indexer.dart": "a5ecdf9bca9cb8255fceb1af608e187f67c924754d2e682f26c9763b6ea7711b",
-    "lib/src/query/query_parser.dart": "eab932442cd8006fca0af9720a40af0871d6e43c00a89862667dad274cba46b3",
-    "lib/src/query/query_executor.dart": "2ed53c7f30802bea5e93132d207ce1e2ddda8dc88593bc2913206ef753caabd3",
-    "lib/src/query/query_result.dart": "18f94499d9e41c302a29c2a1ae028817ae0510b714f4ad8a248a17139f181faa",
+    "lib/src/query/query_parser.dart": "a6f8d6d409498362ee17ff29e256045764ed20df8c0dd6cfe68a3d314dd70a77",
+    "lib/src/query/query_executor.dart": "a576219b84c9e873f403f1d97b55cd9dd67a0a790aa6a58da876794ba8685bf8",
+    "lib/src/query/query_result.dart": "e030e4b1925264de0ba9f2b879e08d695ca947b479d3548febf9bed0afb63d31",
     "lib/src/analyzer/signature_visitor.dart": "6be1e557d0da7531adb79d999189efd884d128427c40363d9e48a6cf5ca5803b"
   }
 }

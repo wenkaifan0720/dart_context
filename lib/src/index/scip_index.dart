@@ -292,20 +292,31 @@ class ScipIndex {
   /// Find symbols matching a pattern.
   ///
   /// Supports wildcards: `Auth*` matches `AuthRepository`, `AuthService`, etc.
+  /// Supports OR patterns: `Scip*|*Index` matches names starting with "Scip"
+  /// OR ending with "Index".
+  ///
+  /// The pattern matches the symbol NAME only (not the full path).
+  /// Use `in:path` filter to match against file paths.
   Iterable<SymbolInfo> findSymbols(String pattern) {
     if (pattern.isEmpty) return const [];
 
-    // Convert glob pattern to regex
+    // Convert glob pattern to regex, anchored to match entire name
     final regexPattern = pattern
         .replaceAll('.', r'\.')
         .replaceAll('*', '.*')
         .replaceAll('?', '.');
 
-    final regex = RegExp(regexPattern, caseSensitive: false);
+    // Anchor the pattern to match the entire name
+    // For OR patterns like "A*|*B", wrap in non-capturing group
+    final anchoredPattern = pattern.contains('|')
+        ? '^(?:$regexPattern)\$'
+        : '^$regexPattern\$';
+
+    final regex = RegExp(anchoredPattern, caseSensitive: false);
 
     return _symbolIndex.values.where((sym) {
-      // Match against full symbol or just the name
-      return regex.hasMatch(sym.symbol) || regex.hasMatch(sym.name);
+      // Match against name only (not full symbol path)
+      return regex.hasMatch(sym.name);
     });
   }
 

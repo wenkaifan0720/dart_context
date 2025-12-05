@@ -13,10 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Incremental SCIP indexing** with file watching and hash-based change detection
 - **Index caching** for ~35x faster startup times (300ms vs 10s)
 - **Query DSL** for semantic code navigation
+- **Signature extraction** using the Dart analyzer for accurate signatures
 
 #### Query Commands
 - `def <symbol>` - Find symbol definitions
 - `refs <symbol>` - Find all references to a symbol
+- `sig <symbol>` - Get signature (declaration without body)
 - `members <symbol>` - Get class/mixin/extension members
 - `impls <symbol>` - Find implementations of a class/interface
 - `supertypes <symbol>` - Get supertypes of a class
@@ -25,7 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `source <symbol>` - Get source code for a symbol
 - `find <pattern>` - Search symbols by pattern
 - `which <symbol>` - Disambiguate multiple matches
-- `grep <pattern>` - Search in source code (like grep)
+- `grep <pattern>` - Search in source code (full grep feature parity)
 - `calls <symbol>` - What does this symbol call?
 - `callers <symbol>` - What calls this symbol?
 - `imports <file>` - File import analysis
@@ -35,14 +37,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `stats` - Index statistics
 
 #### Pattern Matching
-- Glob patterns: `Auth*`, `*Service`
+- Glob patterns with OR: `Auth*`, `*Service`, `Scip*|*Index`
 - Regex patterns: `/TODO|FIXME/`, `/error/i`
 - Fuzzy matching: `~authentcate` (typo-tolerant)
 - Qualified names: `MyClass.method`
 
+#### Grep Flags (Full grep/ripgrep parity)
+- `-i` - Case insensitive
+- `-v` - Invert match (non-matching lines)
+- `-w` - Word boundary (whole words only)
+- `-l` - List files with matches
+- `-L` - List files without matches
+- `-c` - Count matches per file
+- `-o` - Show only matched text
+- `-F` - Fixed strings (literal, no regex)
+- `-M` - Multiline matching
+- `-C:n`, `-A:n`, `-B:n` - Context lines
+- `-m:n` - Max matches per file
+- `--include:glob`, `--exclude:glob` - File filtering
+
 #### Pipe Queries
 - Chain queries: `find Auth* | refs`
 - Multi-stage: `find Auth* kind:class | members | source`
+- Direct symbol passing (preserves full symbol identity)
 
 #### Integrations
 - CLI tool with interactive mode (`-i`) and watch mode (`-w`)

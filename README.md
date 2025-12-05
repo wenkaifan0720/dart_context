@@ -138,14 +138,32 @@ which login
 | `~authentcate` | Fuzzy | Typo-tolerant matching (finds "authenticate") |
 | `login` | Literal | Exact match |
 
-### Filters (for `find` and `grep`)
+### Filters (for `find`)
 
 | Filter | Description |
 |--------|-------------|
 | `kind:<kind>` | Filter by symbol kind (class, method, function, field, etc.) |
 | `in:<path>` | Filter by file path prefix |
-| `-i` | Case insensitive (for grep) |
-| `-C:n` | Context lines around match (for grep, default: 2) |
+
+### Grep Flags
+
+| Flag | Description | Example |
+|------|-------------|---------|
+| `-i` | Case insensitive | `grep error -i` |
+| `-v` | Invert match (non-matching lines) | `grep TODO -v` |
+| `-w` | Word boundary (whole words only) | `grep test -w` |
+| `-l` | List files with matches only | `grep TODO -l` |
+| `-L` | List files without matches | `grep TODO -L` |
+| `-c` | Count matches per file | `grep error -c` |
+| `-o` | Show only matched text | `grep /\w+Error/ -o` |
+| `-F` | Fixed strings (literal, no regex) | `grep -F '$variable'` |
+| `-M` | Multiline matching | `grep /class.*\{/ -M` |
+| `-C:n` | Context lines (before + after) | `grep TODO -C:3` |
+| `-A:n` | Lines after match | `grep error -A:5` |
+| `-B:n` | Lines before match | `grep error -B:2` |
+| `-m:n` | Max matches per file | `grep TODO -m:10` |
+| `--include:glob` | Only search matching files | `grep error --include:*.dart` |
+| `--exclude:glob` | Skip matching files | `grep TODO --exclude:test/*` |
 
 ### Examples
 
@@ -170,6 +188,13 @@ refs FormWidget.handleSubmit  # Get refs for specific one
 grep /TODO|FIXME/          # Find TODOs and FIXMEs
 grep /throw.*Exception/    # Find exception throws
 grep error in:lib/         # Find "error" in lib/
+grep TODO -c               # Count TODOs per file
+grep TODO -l               # List files with TODOs
+grep TODO -L               # List files WITHOUT TODOs
+grep test -w               # Match whole word "test" only
+grep /\w+Service/ -o       # Extract service class names
+grep -F '$_controller'     # Search literal $ without escaping
+grep TODO --exclude:test/* # Skip test files
 
 # Fuzzy matching (typo-tolerant)
 find ~authentcate          # Finds "authenticate" despite typo

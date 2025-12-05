@@ -1301,16 +1301,13 @@ class QueryExecutor {
     );
   }
 
-  /// Helper to resolve a symbol from a query.
+  /// Helper to resolve a single symbol from a query.
+  ///
+  /// Uses [_findMatchingSymbols] and returns the best match:
+  /// - Prefers exact name matches
+  /// - Falls back to first match
   SymbolInfo? _resolveSymbol(ScipQuery query) {
-    List<SymbolInfo> symbols;
-
-    if (query.isQualified) {
-      symbols = index.findQualified(query.container!, query.memberName).toList();
-    } else {
-      symbols = index.findSymbols(query.target).toList();
-    }
-
+    final symbols = _findMatchingSymbols(query);
     if (symbols.isEmpty) return null;
 
     // Prefer exact name matches

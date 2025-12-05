@@ -75,6 +75,16 @@ Future<void> main(List<String> args) async {
     print(todos.toText());
     print('');
 
+    print('═══ Grep: Count TODOs per file (-c) ═══');
+    final todoCount = await context.query('grep TODO -c');
+    print(todoCount.toText());
+    print('');
+
+    print('═══ Grep: Files with TODOs (-l) ═══');
+    final todoFiles = await context.query('grep TODO -l');
+    print(todoFiles.toText());
+    print('');
+
     // ═══════════════════════════════════════════════════════════════════════
     // PIPE QUERIES
     // ═══════════════════════════════════════════════════════════════════════

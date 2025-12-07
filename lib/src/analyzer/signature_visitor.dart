@@ -5,6 +5,7 @@
 
 import 'package:analyzer/dart/ast/ast.dart';
 import 'package:analyzer/dart/ast/token.dart';
+import 'package:analyzer/src/dart/ast/ast.dart' as impl;
 import 'package:analyzer/src/dart/ast/to_source_visitor.dart';
 
 /// AST visitor that generates signatures with method bodies replaced by `{}`.
@@ -21,7 +22,89 @@ import 'package:analyzer/src/dart/ast/to_source_visitor.dart';
 /// }
 /// ```
 class SignatureVisitor extends ToSourceVisitor {
-  SignatureVisitor(super.sink);
+  SignatureVisitor(super.sink, {this.indent = '  '});
+
+  /// Indentation string for members (default: 2 spaces).
+  final String indent;
+
+  @override
+  void visitClassDeclaration(covariant impl.ClassDeclarationImpl node) {
+    _visitNodeList(node.metadata, separator: ' ', suffix: ' ');
+    _visitToken(node.abstractKeyword, suffix: ' ');
+    _visitToken(node.sealedKeyword, suffix: ' ');
+    _visitToken(node.baseKeyword, suffix: ' ');
+    _visitToken(node.interfaceKeyword, suffix: ' ');
+    _visitToken(node.finalKeyword, suffix: ' ');
+    _visitToken(node.mixinKeyword, suffix: ' ');
+    sink.write('class ');
+    _visitToken(node.name);
+    _visitNode(node.typeParameters);
+    _visitNode(node.extendsClause, prefix: ' ');
+    _visitNode(node.withClause, prefix: ' ');
+    _visitNode(node.implementsClause, prefix: ' ');
+    sink.write(' {\n');
+    _visitMemberList(node.members);
+    sink.write('}');
+  }
+
+  @override
+  void visitMixinDeclaration(covariant impl.MixinDeclarationImpl node) {
+    _visitNodeList(node.metadata, separator: ' ', suffix: ' ');
+    _visitToken(node.baseKeyword, suffix: ' ');
+    sink.write('mixin ');
+    _visitToken(node.name);
+    _visitNode(node.typeParameters);
+    _visitNode(node.onClause, prefix: ' ');
+    _visitNode(node.implementsClause, prefix: ' ');
+    sink.write(' {\n');
+    _visitMemberList(node.members);
+    sink.write('}');
+  }
+
+  @override
+  void visitEnumDeclaration(covariant impl.EnumDeclarationImpl node) {
+    _visitNodeList(node.metadata, separator: ' ', suffix: ' ');
+    sink.write('enum ');
+    _visitToken(node.name);
+    _visitNode(node.typeParameters);
+    _visitNode(node.withClause, prefix: ' ');
+    _visitNode(node.implementsClause, prefix: ' ');
+    sink.write(' {\n');
+    for (var i = 0; i < node.constants.length; i++) {
+      sink.write(indent);
+      node.constants[i].accept(this);
+      sink.write(i < node.constants.length - 1 ? ',\n' : '');
+    }
+    if (node.members.isNotEmpty) {
+      sink.write(';\n');
+      _visitMemberList(node.members);
+    } else {
+      sink.write('\n');
+    }
+    sink.write('}');
+  }
+
+  @override
+  void visitExtensionDeclaration(covariant impl.ExtensionDeclarationImpl node) {
+    _visitNodeList(node.metadata, separator: ' ', suffix: ' ');
+    sink.write('extension ');
+    _visitToken(node.name);
+    _visitNode(node.typeParameters);
+    sink.write(' on ');
+    node.extendedType.accept(this);
+    sink.write(' {\n');
+    _visitMemberList(node.members);
+    sink.write('}');
+  }
+
+  /// Visit a list of class members with proper indentation and newlines.
+  void _visitMemberList(List<ClassMember> members) {
+    for (final member in members) {
+      sink.write(indent);
+      member.accept(this);
+      sink.write('\n');
+    }
+  }
 
   @override
   void visitConstructorDeclaration(ConstructorDeclaration node) {

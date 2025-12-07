@@ -1052,6 +1052,29 @@ class SymbolInfo {
 
     // Extract name from SCIP symbol
     // Format: scheme package version path/Class#method().
+    // Also handles backtick-escaped names like `<get>files`.
+
+    // Try to extract getter/setter name: `<get>name`. or `<set>name`.
+    final getterMatch = RegExp(r'`<(get|set)>([^`]+)`\.?$').firstMatch(symbol);
+    if (getterMatch != null) {
+      return getterMatch.group(2)!;
+    }
+
+    // Try to extract constructor: `<constructor>`().
+    final ctorMatch = RegExp(r'`<constructor>`\(\)\.?$').firstMatch(symbol);
+    if (ctorMatch != null) {
+      // Return the class name from before the #
+      final classMatch = RegExp(r'/([A-Za-z_][A-Za-z0-9_]*)#').firstMatch(symbol);
+      return classMatch?.group(1) ?? 'constructor';
+    }
+
+    // Try to extract backtick-escaped name: `name`.
+    final backtickMatch = RegExp(r'`([^`]+)`\.?$').firstMatch(symbol);
+    if (backtickMatch != null) {
+      return backtickMatch.group(1)!;
+    }
+
+    // Standard name extraction
     final match = RegExp(r'([A-Za-z_][A-Za-z0-9_]*)[\.\#\(\)\[\]]*$')
         .firstMatch(symbol);
     return match?.group(1) ?? symbol;

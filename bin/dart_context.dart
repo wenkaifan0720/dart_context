@@ -17,6 +17,9 @@ void main(List<String> arguments) async {
       case 'index-sdk':
         await _indexSdk(arguments.skip(1).toList());
         return;
+      case 'index-flutter':
+        await _indexFlutter(arguments.skip(1).toList());
+        return;
       case 'index-deps':
         await _indexDependencies(arguments.skip(1).toList());
         return;
@@ -152,7 +155,8 @@ void main(List<String> arguments) async {
 }
 
 void _printUsage(ArgParser parser) {
-  stdout.writeln('dart_context - Lightweight semantic code intelligence for Dart');
+  stdout.writeln(
+      'dart_context - Lightweight semantic code intelligence for Dart');
   stdout.writeln('');
   stdout.writeln('Usage: dart_context [options] <query>');
   stdout.writeln('       dart_context <subcommand> [args]');
@@ -161,9 +165,11 @@ void _printUsage(ArgParser parser) {
   stdout.writeln(parser.usage);
   stdout.writeln('');
   stdout.writeln('Subcommands:');
-  stdout.writeln('  index-sdk <sdk-path>   Pre-index the Dart/Flutter SDK');
+  stdout.writeln('  index-sdk <sdk-path>   Pre-index the Dart SDK');
+  stdout.writeln('  index-flutter [path]   Pre-index Flutter packages');
   stdout.writeln('  index-deps             Pre-index all pub dependencies');
-  stdout.writeln('  list-indexes           List available pre-computed indexes');
+  stdout
+      .writeln('  list-indexes           List available pre-computed indexes');
   stdout.writeln('');
   stdout.writeln('Query DSL:');
   stdout.writeln('  def <symbol>           Find definition');
@@ -187,7 +193,8 @@ void _printUsage(ArgParser parser) {
   stdout.writeln('  stats                  Index statistics');
   stdout.writeln('');
   stdout.writeln('Filters:');
-  stdout.writeln('  kind:<kind>            Filter by kind (class, method, function, etc.)');
+  stdout.writeln(
+      '  kind:<kind>            Filter by kind (class, method, function, etc.)');
   stdout.writeln('  in:<path>              Filter by file path prefix');
   stdout.writeln('');
   stdout.writeln('Grep Flags:');
@@ -212,7 +219,8 @@ void _printUsage(ArgParser parser) {
   stdout.writeln('  dart_context "find *Service | members"');
   stdout.writeln('  dart_context -i                    # Interactive mode');
   stdout.writeln('  dart_context -w                    # Watch mode');
-  stdout.writeln('  dart_context -w "find * kind:class"  # Watch + re-run on changes');
+  stdout.writeln(
+      '  dart_context -w "find * kind:class"  # Watch + re-run on changes');
   stdout.writeln('');
   stdout.writeln('Pre-indexing dependencies (for cross-package queries):');
   stdout.writeln('  dart_context index-sdk /path/to/dart-sdk');
@@ -257,10 +265,10 @@ Future<void> _runWatch(
   // Watch for file updates
   final subscription = context.updates.listen((update) async {
     final timestamp = DateTime.now().toIso8601String().substring(11, 19);
-    
+
     if (update is FileUpdatedUpdate) {
       stderr.writeln('[$timestamp] Updated: ${update.path}');
-      
+
       // Re-run query if provided
       if (query != null) {
         final result = await context.query(query);
@@ -269,7 +277,7 @@ Future<void> _runWatch(
       }
     } else if (update is FileRemovedUpdate) {
       stderr.writeln('[$timestamp] Removed: ${update.path}');
-      
+
       // Re-run query if provided
       if (query != null) {
         final result = await context.query(query);
@@ -326,7 +334,8 @@ Future<void> _runInteractive(DartContext context, String format) async {
         stdout.writeln('  callers <symbol>      What calls it?');
         stdout.writeln('  deps <symbol>         Dependencies of a symbol');
         stdout.writeln('  find <pattern>        Search symbols');
-        stdout.writeln('  which <symbol>        Show all matches (disambiguation)');
+        stdout.writeln(
+            '  which <symbol>        Show all matches (disambiguation)');
         stdout.writeln('  grep <pattern>        Search in source code');
         stdout.writeln('  imports <file>        What does this file import?');
         stdout.writeln('  exports <path>        What does this path export?');
@@ -336,7 +345,8 @@ Future<void> _runInteractive(DartContext context, String format) async {
         stdout.writeln('  /TODO|FIXME/          Regex pattern');
         stdout.writeln('  /error/i              Case-insensitive regex');
         stdout.writeln('  ~authentcate          Fuzzy (typo-tolerant)');
-        stdout.writeln('  Class.method          Qualified name (disambiguation)');
+        stdout
+            .writeln('  Class.method          Qualified name (disambiguation)');
         stdout.writeln('');
         stdout.writeln('Filters (for find/grep):');
         stdout.writeln('  kind:class            Filter by kind');
@@ -350,7 +360,8 @@ Future<void> _runInteractive(DartContext context, String format) async {
         stdout.writeln('  -o                    Show only matching text');
         stdout.writeln('  -w                    Word boundary matching');
         stdout.writeln('  -v                    Invert match');
-        stdout.writeln('  -C:3                  Context lines (before + after)');
+        stdout
+            .writeln('  -C:3                  Context lines (before + after)');
         stdout.writeln('  -A:5 -B:2             Lines after / before');
         stdout.writeln('');
         stdout.writeln('Pipe Queries:');
@@ -444,6 +455,125 @@ Future<void> _indexSdk(List<String> args) async {
   }
 }
 
+/// Index the Flutter framework packages.
+///
+/// This indexes the main Flutter packages (flutter, flutter_test, etc.)
+/// to enable queries like `hierarchy StatelessWidget`.
+Future<void> _indexFlutter(List<String> args) async {
+  // Default to FLUTTER_ROOT env var or common paths
+  String? flutterPath;
+  if (args.isNotEmpty) {
+    flutterPath = args.first;
+  } else {
+    flutterPath = Platform.environment['FLUTTER_ROOT'];
+    if (flutterPath == null) {
+      // Try to find Flutter from the flutter command
+      try {
+        final result = await Process.run('which', ['flutter']);
+        if (result.exitCode == 0) {
+          final flutterBin = result.stdout.toString().trim();
+          // Flutter binary is at FLUTTER_ROOT/bin/flutter
+          flutterPath = Directory(flutterBin).parent.parent.path;
+        }
+      } catch (_) {}
+    }
+  }
+
+  if (flutterPath == null || !await Directory(flutterPath).exists()) {
+    stderr.writeln('Usage: dart_context index-flutter [flutter-path]');
+    stderr.writeln('');
+    stderr.writeln(
+        'If no path is provided, uses FLUTTER_ROOT environment variable');
+    stderr.writeln('or tries to find Flutter from PATH.');
+    stderr.writeln('');
+    stderr.writeln('Example:');
+    stderr.writeln('  dart_context index-flutter');
+    stderr.writeln('  dart_context index-flutter /opt/flutter');
+    exit(1);
+  }
+
+  final packagesPath = '$flutterPath/packages';
+  if (!await Directory(packagesPath).exists()) {
+    stderr.writeln('Error: Flutter packages not found at $packagesPath');
+    exit(1);
+  }
+
+  // Get Flutter version
+  final versionFile = File('$flutterPath/version');
+  final version = await versionFile.exists()
+      ? (await versionFile.readAsString()).trim()
+      : 'unknown';
+
+  stderr.writeln('Indexing Flutter $version packages...');
+  stderr.writeln('Path: $flutterPath');
+  stderr.writeln('');
+
+  // List of Flutter packages to index
+  final flutterPackages = [
+    'flutter',
+    'flutter_test',
+    'flutter_driver',
+    'flutter_localizations',
+    'flutter_web_plugins',
+  ];
+
+  final tempIndex = _createEmptyIndex(flutterPath);
+  final registry = IndexRegistry(projectIndex: tempIndex);
+  final builder = ExternalIndexBuilder(registry: registry);
+
+  final stopwatch = Stopwatch()..start();
+  var successCount = 0;
+  var failCount = 0;
+
+  for (final pkgName in flutterPackages) {
+    final pkgPath = '$packagesPath/$pkgName';
+    if (!await Directory(pkgPath).exists()) {
+      stderr.writeln('  Skipping $pkgName (not found)');
+      continue;
+    }
+
+    // Check if package_config.json exists, run flutter pub get if not
+    final pkgConfigFile = File('$pkgPath/.dart_tool/package_config.json');
+    if (!await pkgConfigFile.exists()) {
+      stderr.writeln('  Running flutter pub get in $pkgName...');
+      final result = await Process.run(
+        'flutter',
+        ['pub', 'get'],
+        workingDirectory: pkgPath,
+      );
+      if (result.exitCode != 0) {
+        stderr.writeln('  ✗ Failed to get dependencies for $pkgName');
+        failCount++;
+        continue;
+      }
+    }
+
+    stderr.write('  Indexing $pkgName... ');
+    final result = await builder.indexPackage(
+      pkgName,
+      version,
+      pkgPath,
+    );
+
+    if (result.success) {
+      stdout.writeln('✓ (${result.stats?['symbols']} symbols)');
+      successCount++;
+    } else {
+      stdout.writeln('✗ ${result.error}');
+      failCount++;
+    }
+  }
+
+  stopwatch.stop();
+  stdout.writeln('');
+  stdout.writeln('Results:');
+  stdout.writeln('  Indexed: $successCount packages');
+  stdout.writeln('  Failed: $failCount packages');
+  stdout.writeln('  Time: ${stopwatch.elapsed.inSeconds}s');
+  stdout.writeln('');
+  stdout.writeln('Indexes saved to: ${registry.globalCachePath}/packages/');
+}
+
 /// Index all pub dependencies for cross-package queries.
 Future<void> _indexDependencies(List<String> args) async {
   final projectPath = args.isNotEmpty ? args.first : '.';
@@ -534,4 +664,3 @@ ScipIndex _createEmptyIndex(String projectRoot) {
     projectRoot: projectRoot,
   );
 }
-

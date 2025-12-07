@@ -1,12 +1,19 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:analyzer/dart/analysis/analysis_context_collection.dart';
+import 'package:analyzer/dart/analysis/results.dart';
 import 'package:package_config/package_config.dart';
+import 'package:path/path.dart' as p;
 import 'package:pubspec_parse/pubspec_parse.dart';
 // ignore: implementation_imports
 import 'package:scip_dart/scip_dart.dart' as scip_dart;
 // ignore: implementation_imports
 import 'package:scip_dart/src/gen/scip.pb.dart' as scip;
+// ignore: implementation_imports
+import 'package:scip_dart/src/scip_visitor.dart';
+// ignore: implementation_imports
+import 'package:scip_dart/src/version.dart';
 
 import 'index_registry.dart';
 import 'scip_index.dart';
@@ -140,33 +147,131 @@ class ExternalIndexBuilder {
   }
 
   /// Index a directory using scip_dart library.
+  ///
+  /// This uses a custom implementation that correctly handles packages
+  /// where the lib/ directory needs to be analyzed separately from the
+  /// package root.
   Future<scip.Index?> _indexDirectory(String path) async {
+    // Ensure we have an absolute path
+    final absPath = Directory(path).absolute.path;
+
     // Find pubspec first
-    final pubspecFile = File('$path/pubspec.yaml');
+    final pubspecFile = File('$absPath/pubspec.yaml');
     if (!await pubspecFile.exists()) {
       return null;
     }
     final pubspec = Pubspec.parse(await pubspecFile.readAsString());
 
-    // Check if package_config exists
-    var packageConfig = await findPackageConfig(Directory(path));
+    // Try to find an existing package_config.json
+    var packageConfig = await findPackageConfig(Directory(absPath));
+
     if (packageConfig == null) {
-      // Create a minimal synthetic package config for pub cache packages
-      packageConfig = _createSyntheticPackageConfig(path, pubspec.name);
+      // For packages without package_config (like pub cache packages),
+      // create a minimal synthetic config
+      packageConfig = _createSyntheticPackageConfig(absPath, pubspec.name);
     }
 
-    // Index using scip_dart library
-    return scip_dart.indexPackage(path, packageConfig, pubspec);
+    // Check if lib/ directory exists
+    final libPath = '$absPath/lib';
+    final hasLib = await Directory(libPath).exists();
+
+    // Use custom indexing for packages with separate lib context
+    if (hasLib) {
+      return _indexPackageWithLib(absPath, libPath, packageConfig, pubspec);
+    }
+
+    // Fall back to standard scip_dart for packages without lib
+    return scip_dart.indexPackage(absPath, packageConfig, pubspec);
+  }
+
+  /// Index a package, ensuring the lib/ directory is properly analyzed.
+  ///
+  /// The Dart analyzer may create separate contexts for subdirectories
+  /// with their own analysis_options.yaml. This method ensures we get
+  /// the context for the lib/ directory which contains the actual library code.
+  Future<scip.Index?> _indexPackageWithLib(
+    String packagePath,
+    String libPath,
+    PackageConfig packageConfig,
+    Pubspec pubspec,
+  ) async {
+    final dirPath = p.normalize(p.absolute(packagePath));
+
+    final metadata = scip.Metadata(
+      projectRoot: Uri.file(dirPath).toString(),
+      textDocumentEncoding: scip.TextEncoding.UTF8,
+      toolInfo: scip.ToolInfo(
+        name: 'scip-dart',
+        version: scipDartVersion,
+        arguments: [],
+      ),
+    );
+
+    // Get all package roots for dependency resolution
+    final allPackageRoots = packageConfig.packages
+        .map((package) => p.normalize(package.packageUriRoot.toFilePath()))
+        .toList();
+
+    // Create collection with lib path explicitly included
+    final collection = AnalysisContextCollection(
+      includedPaths: [
+        ...allPackageRoots,
+        libPath, // Explicitly include lib path
+        dirPath,
+      ],
+    );
+
+    // Get the context for the lib path specifically
+    final context = collection.contextFor(libPath);
+    final resolvedUnitFutures = context.contextRoot
+        .analyzedFiles()
+        .where((file) => p.extension(file) == '.dart')
+        .map(context.currentSession.getResolvedUnit);
+
+    final resolvedUnits = await Future.wait(resolvedUnitFutures);
+
+    final documents =
+        resolvedUnits.whereType<ResolvedUnitResult>().map((resUnit) {
+      // Make path relative to package root (not lib)
+      final relativePath = p.relative(resUnit.path, from: dirPath);
+
+      final visitor = ScipVisitor(
+        relativePath,
+        dirPath,
+        resUnit.lineInfo,
+        resUnit.errors,
+        packageConfig,
+        pubspec,
+      );
+      resUnit.unit.accept(visitor);
+
+      return scip.Document(
+        language: scip.Language.Dart.name,
+        relativePath: relativePath,
+        occurrences: visitor.occurrences,
+        symbols: visitor.symbols,
+      );
+    }).toList();
+
+    return scip.Index(
+      metadata: metadata,
+      documents: documents,
+      externalSymbols: globalExternalSymbols,
+    );
   }
 
   /// Create a minimal package config for indexing a single package.
-  PackageConfig _createSyntheticPackageConfig(String packagePath, String packageName) {
+  ///
+  /// This is used for packages in pub cache that don't have package_config.json.
+  PackageConfig _createSyntheticPackageConfig(
+      String packagePath, String packageName) {
+    // Use absolute file:// URI for the package root
     final packageUri = Uri.file('$packagePath/');
     return PackageConfig([
       Package(
         packageName,
         packageUri,
-        packageUriRoot: Uri.parse('lib/'),
+        packageUriRoot: Uri.file('$packagePath/lib/'),
         languageVersion: LanguageVersion(3, 0), // Use a reasonable default
       ),
     ]);

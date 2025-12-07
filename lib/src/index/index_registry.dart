@@ -305,7 +305,7 @@ class IndexRegistry {
   /// Load all available pre-indexed dependencies for a project.
   ///
   /// Parses pubspec.lock and loads any packages that have pre-computed indexes.
-  /// Also tries to load the SDK if available.
+  /// Also tries to load the SDK and Flutter packages if available.
   ///
   /// Returns the number of packages loaded.
   Future<int> loadDependenciesFrom(String projectPath) async {
@@ -335,6 +335,25 @@ class IndexRegistry {
       }
     }
 
+    // Also try to load Flutter packages if the project uses Flutter
+    final flutterVersion = await _detectFlutterVersion(projectPath);
+    if (flutterVersion != null) {
+      final flutterPackages = [
+        'flutter',
+        'flutter_test',
+        'flutter_driver',
+        'flutter_localizations',
+        'flutter_web_plugins',
+      ];
+
+      for (final pkg in flutterPackages) {
+        if (await hasPackageIndex(pkg, flutterVersion)) {
+          await loadPackage(pkg, flutterVersion);
+          loadedCount++;
+        }
+      }
+    }
+
     return loadedCount;
   }
 
@@ -354,6 +373,54 @@ class IndexRegistry {
       }
     } catch (_) {
       // Ignore errors
+    }
+    return null;
+  }
+
+  /// Detect the Flutter SDK version being used by a project.
+  ///
+  /// Returns the Flutter version if the project uses Flutter, null otherwise.
+  Future<String?> _detectFlutterVersion(String projectPath) async {
+    // First check if this is a Flutter project
+    final pubspecFile = File('$projectPath/pubspec.yaml');
+    if (!await pubspecFile.exists()) {
+      return null;
+    }
+
+    final pubspecContent = await pubspecFile.readAsString();
+    // Simple check: look for flutter SDK dependency
+    if (!pubspecContent.contains('flutter:') ||
+        !pubspecContent.contains('sdk: flutter')) {
+      return null;
+    }
+
+    // Try to get Flutter version from flutter command
+    try {
+      final result = await Process.run('flutter', ['--version', '--machine']);
+      if (result.exitCode == 0) {
+        // Parse JSON output
+        final output = result.stdout.toString();
+        final versionMatch =
+            RegExp(r'"frameworkVersion":\s*"([^"]+)"').firstMatch(output);
+        if (versionMatch != null) {
+          return versionMatch.group(1);
+        }
+      }
+    } catch (_) {
+      // Try without --machine flag
+      try {
+        final result = await Process.run('flutter', ['--version']);
+        if (result.exitCode == 0) {
+          // Parse version from output like "Flutter 3.x.x ..."
+          final output = result.stdout.toString();
+          final match = RegExp(r'Flutter\s+(\d+\.\d+\.\d+)').firstMatch(output);
+          if (match != null) {
+            return match.group(1);
+          }
+        }
+      } catch (_) {
+        // Ignore errors
+      }
     }
     return null;
   }

@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:collection/collection.dart';
+import 'package:protobuf/protobuf.dart' show CodedBufferReader;
 // ignore: implementation_imports
 import 'package:scip_dart/src/gen/scip.pb.dart' as scip;
 
@@ -59,12 +60,19 @@ class ScipIndex {
   final String _projectRoot;
 
   /// Load index from a SCIP protobuf file.
+  ///
+  /// Supports large index files up to 256MB (compared to default 64MB limit).
   static Future<ScipIndex> loadFromFile(
     String indexPath, {
     required String projectRoot,
   }) async {
     final bytes = await File(indexPath).readAsBytes();
-    final index = scip.Index.fromBuffer(bytes);
+    // Use a larger size limit for large packages like Flutter
+    final reader = CodedBufferReader(
+      bytes,
+      sizeLimit: 256 << 20, // 256MB limit
+    );
+    final index = scip.Index()..mergeFromCodedBufferReader(reader);
     return fromScipIndex(index, projectRoot: projectRoot);
   }
 

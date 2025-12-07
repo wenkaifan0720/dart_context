@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
+import 'package:protobuf/protobuf.dart' show CodedBufferReader;
 // ignore: implementation_imports
 import 'package:scip_dart/src/gen/scip.pb.dart' as scip;
 
@@ -53,7 +54,12 @@ class IndexCache {
     try {
       final indexFile = File(indexPath);
       final bytes = await indexFile.readAsBytes();
-      final index = scip.Index.fromBuffer(bytes);
+      // Use a larger size limit for large packages
+      final reader = CodedBufferReader(
+        bytes,
+        sizeLimit: 256 << 20, // 256MB limit
+      );
+      final index = scip.Index()..mergeFromCodedBufferReader(reader);
 
       final manifest = await _loadManifest();
 

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "createdAt": "2025-12-07T20:41:02.502183",
+  "createdAt": "2025-12-07T20:48:49.524528",
   "projectRoot": "/Users/wenkaifan/Dev/dart_context",
   "fileHashes": {
     "test/integration/incremental_indexer_test.dart": "6bd65564a1baf68e0a065d74a0296ad377927206e2fc07f3fa8300599309d1c0",
@@ -18,7 +18,7 @@
     "test/query/query_result_test.dart": "659ffb8180e6553868981eb12d8619fbedcc1d665525e7747cebe5f06c8a47d6",
     "test/query/output_improvements_test.dart": "18a74dcb262ecbb68a18eea6d4eaf6fcfb4ee5691d27f09074e33139de4d5d1e",
     "test/query/pipe_query_test.dart": "156c184f584e46005bedba6625274e76fa18fc63726a056a9dfcb619d3984228",
-    "bin/dart_context.dart": "62cc35f740b18c4ac8b6e7ea53c7db5deef023b3b96c0f9df77422aa194ac97f",
+    "bin/dart_context.dart": "4ae043c9897162d17349ca1b81af713c3800250a0aceafdcdad1dc48d679f4a0",
     "example/example.dart": "8c3cf07614c644ee594970cc29493e75b0a6a7e0b1ed1fbbd1fa2d7e246f3b04",
     "lib/dart_context_mcp.dart": "c7e9857e2f98cd798b7ee595e3ded655cc57e2a2e191ad212237e29d5c145354",
     "lib/dart_context.dart": "12899b878035bb012fa0fbf36aa35fd37b997b773ffffdee05eaf758731c7525",

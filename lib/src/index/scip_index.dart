@@ -43,13 +43,15 @@ class ScipIndex {
     required Map<String, Set<String>> callsIndex,
     required Map<String, Set<String>> callersIndex,
     required String projectRoot,
+    String? sourceRoot,
   })  : _symbolIndex = symbolIndex,
         _referenceIndex = referenceIndex,
         _documentIndex = documentIndex,
         _childIndex = childIndex,
         _callsIndex = callsIndex,
         _callersIndex = callersIndex,
-        _projectRoot = projectRoot;
+        _projectRoot = projectRoot,
+        _sourceRoot = sourceRoot;
 
   final Map<String, SymbolInfo> _symbolIndex;
   final Map<String, List<OccurrenceInfo>> _referenceIndex;
@@ -58,6 +60,7 @@ class ScipIndex {
   final Map<String, Set<String>> _callsIndex; // symbol → symbols it calls
   final Map<String, Set<String>> _callersIndex; // symbol → symbols that call it
   final String _projectRoot;
+  final String? _sourceRoot;
 
   /// Default maximum size for protobuf index files (256MB).
   static const int defaultMaxIndexSize = 256 << 20;
@@ -67,9 +70,14 @@ class ScipIndex {
   /// The [maxSize] parameter controls the maximum allowed index file size.
   /// Defaults to 256MB which is sufficient for large packages like Flutter.
   /// For very large monorepos, you may need to increase this.
+  ///
+  /// The [sourceRoot] parameter specifies where actual source files are located.
+  /// This is useful for external packages where the index is cached separately
+  /// from the source (e.g., pub cache). If not provided, defaults to [projectRoot].
   static Future<ScipIndex> loadFromFile(
     String indexPath, {
     required String projectRoot,
+    String? sourceRoot,
     int maxSize = defaultMaxIndexSize,
   }) async {
     final bytes = await File(indexPath).readAsBytes();
@@ -78,14 +86,14 @@ class ScipIndex {
       sizeLimit: maxSize,
     );
     final index = scip.Index()..mergeFromCodedBufferReader(reader);
-    return fromScipIndex(index, projectRoot: projectRoot);
+    return fromScipIndex(index, projectRoot: projectRoot, sourceRoot: sourceRoot);
   }
 
   /// Create an empty index with no symbols.
   ///
   /// Useful for bootstrapping when you need an index instance but don't
   /// have any data yet.
-  static ScipIndex empty({required String projectRoot}) {
+  static ScipIndex empty({required String projectRoot, String? sourceRoot}) {
     return ScipIndex._(
       symbolIndex: {},
       referenceIndex: {},
@@ -94,13 +102,18 @@ class ScipIndex {
       callsIndex: {},
       callersIndex: {},
       projectRoot: projectRoot,
+      sourceRoot: sourceRoot,
     );
   }
 
   /// Build index from SCIP protobuf data.
+  ///
+  /// The [sourceRoot] parameter specifies where actual source files are located.
+  /// If not provided, defaults to [projectRoot].
   static ScipIndex fromScipIndex(
     scip.Index raw, {
     required String projectRoot,
+    String? sourceRoot,
   }) {
     final symbolIndex = <String, SymbolInfo>{};
     final referenceIndex = <String, List<OccurrenceInfo>>{};
@@ -186,6 +199,7 @@ class ScipIndex {
       callsIndex: callsIndex,
       callersIndex: callersIndex,
       projectRoot: projectRoot,
+      sourceRoot: sourceRoot,
     );
   }
 
@@ -403,7 +417,7 @@ class ScipIndex {
     final def = findDefinition(symbolId);
     if (def == null) return null;
 
-    final filePath = '$_projectRoot/${def.file}';
+    final filePath = '$sourceRoot/${def.file}';
     final file = File(filePath);
     if (!await file.exists()) return null;
 
@@ -511,7 +525,7 @@ class ScipIndex {
     int linesBefore = 2,
     int linesAfter = 2,
   }) async {
-    final filePath = '$_projectRoot/${occ.file}';
+    final filePath = '$sourceRoot/${occ.file}';
     final file = File(filePath);
     if (!await file.exists()) return null;
 
@@ -533,6 +547,13 @@ class ScipIndex {
 
   /// Get the project root.
   String get projectRoot => _projectRoot;
+
+  /// Get the source root where actual source files are located.
+  ///
+  /// For project indexes, this is the same as [projectRoot].
+  /// For external package indexes, this points to the actual source location
+  /// (e.g., pub cache path) rather than the cache directory.
+  String get sourceRoot => _sourceRoot ?? _projectRoot;
 
   /// Get stats about the index.
   Map<String, int> get stats => {
@@ -617,7 +638,7 @@ class ScipIndex {
       // Apply exclude glob
       if (excludeRegex != null && excludeRegex.hasMatch(path)) continue;
 
-      final filePath = '$_projectRoot/$path';
+      final filePath = '$sourceRoot/$path';
       final file = File(filePath);
       if (!await file.exists()) continue;
 

@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:yaml/yaml.dart';
@@ -116,16 +117,22 @@ class IndexRegistry {
       return _sdkIndex;
     }
 
-    final indexPath = '${sdkIndexPath(version)}/index.scip';
+    final indexDir = sdkIndexPath(version);
+    final indexPath = '$indexDir/index.scip';
     final file = File(indexPath);
 
     if (!await file.exists()) {
       return null;
     }
 
+    // Read manifest to get actual source path
+    final manifest = await _loadManifest(indexDir);
+    final sourceRoot = manifest?['sourcePath'] as String?;
+
     _sdkIndex = await ScipIndex.loadFromFile(
       indexPath,
-      projectRoot: sdkIndexPath(version),
+      projectRoot: indexDir,
+      sourceRoot: sourceRoot,
     );
     _loadedSdkVersion = version;
     return _sdkIndex;
@@ -142,16 +149,22 @@ class IndexRegistry {
       return _packageIndexes[key];
     }
 
-    final indexPath = '${packageIndexPath(name, version)}/index.scip';
+    final indexDir = packageIndexPath(name, version);
+    final indexPath = '$indexDir/index.scip';
     final file = File(indexPath);
 
     if (!await file.exists()) {
       return null;
     }
 
+    // Read manifest to get actual source path
+    final manifest = await _loadManifest(indexDir);
+    final sourceRoot = manifest?['sourcePath'] as String?;
+
     final index = await ScipIndex.loadFromFile(
       indexPath,
-      projectRoot: packageIndexPath(name, version),
+      projectRoot: indexDir,
+      sourceRoot: sourceRoot,
     );
     _packageIndexes[key] = index;
     return index;
@@ -190,6 +203,224 @@ class IndexRegistry {
     }
 
     return null;
+  }
+
+  /// Find the index that owns a symbol.
+  ///
+  /// Returns null if symbol not found in any index.
+  ScipIndex? findOwningIndex(String symbolId) {
+    if (_projectIndex.getSymbol(symbolId) != null) {
+      return _projectIndex;
+    }
+    if (_sdkIndex?.getSymbol(symbolId) != null) {
+      return _sdkIndex;
+    }
+    for (final index in _packageIndexes.values) {
+      if (index.getSymbol(symbolId) != null) {
+        return index;
+      }
+    }
+    return null;
+  }
+
+  /// Find definition across all loaded indexes.
+  ///
+  /// Returns the first definition found in order: project → SDK → packages
+  OccurrenceInfo? findDefinition(String symbolId) {
+    // Check project first
+    final projectDef = _projectIndex.findDefinition(symbolId);
+    if (projectDef != null) return projectDef;
+
+    // Check SDK
+    if (_sdkIndex != null) {
+      final sdkDef = _sdkIndex!.findDefinition(symbolId);
+      if (sdkDef != null) return sdkDef;
+    }
+
+    // Check packages
+    for (final index in _packageIndexes.values) {
+      final pkgDef = index.findDefinition(symbolId);
+      if (pkgDef != null) return pkgDef;
+    }
+
+    return null;
+  }
+
+  /// Resolve a file path to an absolute path for a symbol.
+  ///
+  /// Uses the owning index's sourceRoot to resolve relative paths.
+  String? resolveFilePath(String symbolId) {
+    final owningIndex = findOwningIndex(symbolId);
+    if (owningIndex == null) return null;
+
+    final def = owningIndex.findDefinition(symbolId);
+    if (def == null) return null;
+
+    return '${owningIndex.sourceRoot}/${def.file}';
+  }
+
+  /// Get source code for a symbol from any index.
+  ///
+  /// Searches across all loaded indexes to find the source.
+  Future<String?> getSource(String symbolId) async {
+    final owningIndex = findOwningIndex(symbolId);
+    if (owningIndex == null) return null;
+    return owningIndex.getSource(symbolId);
+  }
+
+  /// Find all references to a symbol across all loaded indexes.
+  ///
+  /// Combines references from project, SDK, and package indexes.
+  List<OccurrenceInfo> findAllReferences(String symbolId) {
+    final refs = <OccurrenceInfo>[];
+
+    // Add references from all indexes
+    refs.addAll(_projectIndex.findReferences(symbolId));
+    if (_sdkIndex != null) {
+      refs.addAll(_sdkIndex!.findReferences(symbolId));
+    }
+    for (final index in _packageIndexes.values) {
+      refs.addAll(index.findReferences(symbolId));
+    }
+
+    return refs;
+  }
+
+  /// Get all calls made by a symbol across all indexes.
+  List<SymbolInfo> getCalls(String symbolId) {
+    final calls = <String, SymbolInfo>{};
+
+    // Get calls from all indexes
+    for (final called in _projectIndex.getCalls(symbolId)) {
+      calls[called.symbol] = called;
+    }
+    if (_sdkIndex != null) {
+      for (final called in _sdkIndex!.getCalls(symbolId)) {
+        calls[called.symbol] = called;
+      }
+    }
+    for (final index in _packageIndexes.values) {
+      for (final called in index.getCalls(symbolId)) {
+        calls[called.symbol] = called;
+      }
+    }
+
+    return calls.values.toList();
+  }
+
+  /// Get all callers of a symbol across all indexes.
+  List<SymbolInfo> getCallers(String symbolId) {
+    final callers = <String, SymbolInfo>{};
+
+    // Get callers from all indexes
+    for (final caller in _projectIndex.getCallers(symbolId)) {
+      callers[caller.symbol] = caller;
+    }
+    if (_sdkIndex != null) {
+      for (final caller in _sdkIndex!.getCallers(symbolId)) {
+        callers[caller.symbol] = caller;
+      }
+    }
+    for (final index in _packageIndexes.values) {
+      for (final caller in index.getCallers(symbolId)) {
+        callers[caller.symbol] = caller;
+      }
+    }
+
+    return callers.values.toList();
+  }
+
+  /// Get all files across all loaded indexes.
+  Iterable<String> get allFiles sync* {
+    yield* _projectIndex.files;
+    if (_sdkIndex != null) {
+      yield* _sdkIndex!.files;
+    }
+    for (final index in _packageIndexes.values) {
+      yield* index.files;
+    }
+  }
+
+  /// Get all loaded indexes (project + external).
+  List<ScipIndex> get allIndexes {
+    final indexes = <ScipIndex>[_projectIndex];
+    if (_sdkIndex != null) {
+      indexes.add(_sdkIndex!);
+    }
+    indexes.addAll(_packageIndexes.values);
+    return indexes;
+  }
+
+  /// Grep across all loaded indexes.
+  ///
+  /// Returns grep matches from project and all loaded external packages.
+  /// Set [includeExternal] to false to only search project files.
+  Future<List<GrepMatchData>> grep(
+    RegExp pattern, {
+    String? pathFilter,
+    String? includeGlob,
+    String? excludeGlob,
+    int linesBefore = 2,
+    int linesAfter = 2,
+    bool invertMatch = false,
+    int? maxPerFile,
+    bool multiline = false,
+    bool onlyMatching = false,
+    bool includeExternal = false,
+  }) async {
+    final results = <GrepMatchData>[];
+
+    // Always search project
+    results.addAll(await _projectIndex.grep(
+      pattern,
+      pathFilter: pathFilter,
+      includeGlob: includeGlob,
+      excludeGlob: excludeGlob,
+      linesBefore: linesBefore,
+      linesAfter: linesAfter,
+      invertMatch: invertMatch,
+      maxPerFile: maxPerFile,
+      multiline: multiline,
+      onlyMatching: onlyMatching,
+    ));
+
+    if (!includeExternal) {
+      return results;
+    }
+
+    // Search SDK
+    if (_sdkIndex != null) {
+      results.addAll(await _sdkIndex!.grep(
+        pattern,
+        pathFilter: pathFilter,
+        includeGlob: includeGlob,
+        excludeGlob: excludeGlob,
+        linesBefore: linesBefore,
+        linesAfter: linesAfter,
+        invertMatch: invertMatch,
+        maxPerFile: maxPerFile,
+        multiline: multiline,
+        onlyMatching: onlyMatching,
+      ));
+    }
+
+    // Search packages
+    for (final index in _packageIndexes.values) {
+      results.addAll(await index.grep(
+        pattern,
+        pathFilter: pathFilter,
+        includeGlob: includeGlob,
+        excludeGlob: excludeGlob,
+        linesBefore: linesBefore,
+        linesAfter: linesAfter,
+        invertMatch: invertMatch,
+        maxPerFile: maxPerFile,
+        multiline: multiline,
+        onlyMatching: onlyMatching,
+      ));
+    }
+
+    return results;
   }
 
   /// Find symbols by name/pattern across indexes.
@@ -453,6 +684,22 @@ class IndexRegistry {
     _sdkIndex = null;
     _loadedSdkVersion = null;
     _packageIndexes.clear();
+  }
+
+  /// Load manifest.json from an index directory.
+  ///
+  /// Returns null if manifest doesn't exist or can't be parsed.
+  Future<Map<String, dynamic>?> _loadManifest(String indexDir) async {
+    final manifestFile = File('$indexDir/manifest.json');
+    if (!await manifestFile.exists()) {
+      return null;
+    }
+    try {
+      final content = await manifestFile.readAsString();
+      return jsonDecode(content) as Map<String, dynamic>;
+    } catch (_) {
+      return null;
+    }
   }
 
   /// Get combined statistics.

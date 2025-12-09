@@ -200,6 +200,7 @@ void _printUsage(ArgParser parser) {
   stdout.writeln('  -l  Files with matches   -L  Files without matches');
   stdout.writeln('  -o  Only matching text   -w  Word boundary');
   stdout.writeln('  -v  Invert match         -F  Fixed strings (literal)');
+  stdout.writeln('  -D  Search dependencies  (with --with-deps)');
   stdout.writeln('  -C:n Context lines       -A:n/-B:n After/before lines');
   stdout.writeln('  --include:glob  Only search matching files');
   stdout.writeln('  --exclude:glob  Skip matching files');
@@ -358,6 +359,7 @@ Future<void> _runInteractive(DartContext context, String format) async {
         stdout.writeln('  -o                    Show only matching text');
         stdout.writeln('  -w                    Word boundary matching');
         stdout.writeln('  -v                    Invert match');
+        stdout.writeln('  -D                    Search external dependencies');
         stdout
             .writeln('  -C:3                  Context lines (before + after)');
         stdout.writeln('  -A:5 -B:2             Lines after / before');

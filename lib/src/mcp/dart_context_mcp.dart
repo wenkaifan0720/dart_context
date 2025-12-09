@@ -249,6 +249,7 @@ base mixin DartContextSupport on ToolsSupport, RootsTrackingSupport {
 | `-o` | Only matching text | `grep /\\w+Error/ -o` |
 | `-F` | Fixed strings (literal) | `grep -F '\$variable'` |
 | `-M` | Multiline matching | `grep /class.*\\{/ -M` |
+| `-D` | Search external dependencies | `grep StatelessWidget -D` |
 | `-C:n` | Context lines | `grep TODO -C:3` |
 | `-A:n` | Lines after | `grep error -A:5` |
 | `-B:n` | Lines before | `grep error -B:2` |

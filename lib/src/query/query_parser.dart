@@ -306,6 +306,10 @@ class ScipQuery {
   /// Get exclude glob pattern (--exclude:*_test.dart).
   String? get excludeGlob => filters['exclude'];
 
+  /// Check if should search external dependencies (-D or --search-deps).
+  /// Only applies to grep command.
+  bool get searchDeps => filters.containsKey('D') || filters.containsKey('search-deps');
+
   /// Parse the target as a pattern.
   ParsedPattern get parsedPattern => ParsedPattern.parse(
         target,

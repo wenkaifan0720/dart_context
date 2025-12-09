@@ -233,8 +233,13 @@ class QueryExecutor {
   }
 
   /// Get implementations for a specific symbol.
+  ///
+  /// Uses [registry] for cross-package lookups when available.
   Future<QueryResult> _implementationsForSymbol(SymbolInfo sym) async {
-    final impls = index.findImplementations(sym.symbol).toList();
+    // Use registry for cross-package lookup if available
+    final impls = registry != null
+        ? registry!.subtypesOf(sym.symbol)
+        : index.findImplementations(sym.symbol).toList();
     return SearchResult(impls);
   }
 
@@ -284,15 +289,31 @@ class QueryExecutor {
   }
 
   /// Get source for a specific symbol.
+  ///
+  /// Uses [registry] for cross-package source access when available.
   Future<QueryResult> _sourceForSymbol(SymbolInfo sym) async {
-    final def = index.findDefinition(sym.symbol);
+    // Try registry first for cross-package support
+    OccurrenceInfo? def;
+    String? source;
+
+    if (registry != null) {
+      def = registry!.findDefinition(sym.symbol);
+      if (def != null) {
+        source = await registry!.getSource(sym.symbol);
+      }
+    } else {
+      def = index.findDefinition(sym.symbol);
+      if (def != null) {
+        source = await index.getSource(sym.symbol);
+      }
+    }
+
     if (def == null) {
       return NotFoundResult(
-        'Symbol "${sym.name}" has no definition (may be external)',
+        'Symbol "${sym.name}" has no definition',
       );
     }
 
-    final source = await index.getSource(sym.symbol);
     if (source == null) {
       return NotFoundResult('Could not read source for "${sym.name}"');
     }
@@ -306,11 +327,20 @@ class QueryExecutor {
   }
 
   /// Get signature for a specific symbol.
+  ///
+  /// Uses [registry] for cross-package signature access when available.
   Future<QueryResult> _signatureForSymbol(SymbolInfo sym) async {
-    final def = index.findDefinition(sym.symbol);
+    // Try registry first for cross-package support
+    OccurrenceInfo? def;
+    if (registry != null) {
+      def = registry!.findDefinition(sym.symbol);
+    } else {
+      def = index.findDefinition(sym.symbol);
+    }
+
     if (def == null) {
       return NotFoundResult(
-        'Symbol "${sym.name}" has no definition (may be external)',
+        'Symbol "${sym.name}" has no definition',
       );
     }
 
@@ -336,8 +366,12 @@ class QueryExecutor {
   }
 
   /// Get calls for a specific symbol.
+  ///
+  /// Uses [registry] for cross-package call graph when available.
   Future<QueryResult> _callsForSymbol(SymbolInfo sym) async {
-    final calls = index.getCalls(sym.symbol).toList();
+    final calls = registry != null
+        ? registry!.getCalls(sym.symbol)
+        : index.getCalls(sym.symbol).toList();
     return CallGraphResult(
       symbol: sym,
       direction: 'calls',
@@ -346,8 +380,12 @@ class QueryExecutor {
   }
 
   /// Get callers for a specific symbol.
+  ///
+  /// Uses [registry] for cross-package call graph when available.
   Future<QueryResult> _callersForSymbol(SymbolInfo sym) async {
-    final callers = index.getCallers(sym.symbol).toList();
+    final callers = registry != null
+        ? registry!.getCallers(sym.symbol)
+        : index.getCallers(sym.symbol).toList();
     return CallGraphResult(
       symbol: sym,
       direction: 'callers',
@@ -356,17 +394,27 @@ class QueryExecutor {
   }
 
   /// Get dependencies for a specific symbol.
+  ///
+  /// Uses [registry] for cross-package call graph when available.
   Future<QueryResult> _depsForSymbol(SymbolInfo sym) async {
     final deps = <String, SymbolInfo>{};
 
-    for (final called in index.getCalls(sym.symbol)) {
+    // Get calls from all indexes
+    final calls = registry != null
+        ? registry!.getCalls(sym.symbol)
+        : index.getCalls(sym.symbol).toList();
+
+    for (final called in calls) {
       deps[called.symbol] = called;
     }
 
     if (sym.kind == scip.SymbolInformation_Kind.Class) {
       final children = index.getChildren(sym.symbol);
       for (final childId in children) {
-        for (final called in index.getCalls(childId)) {
+        final childCalls = registry != null
+            ? registry!.getCalls(childId)
+            : index.getCalls(childId).toList();
+        for (final called in childCalls) {
           deps[called.symbol] = called;
         }
       }
@@ -631,20 +679,35 @@ class QueryExecutor {
     return _aggregatedRefs(query.target, symbols);
   }
 
+  /// Find references for a single symbol.
+  ///
+  /// Uses [registry] for cross-package reference search when available.
   Future<QueryResult> _refsForSingleSymbol(SymbolInfo sym) async {
     final allRefs = <OccurrenceInfo>[];
 
-    // Get direct references to this symbol
-    allRefs.addAll(index.findReferences(sym.symbol));
+    // Get direct references to this symbol from all indexes
+    if (registry != null) {
+      allRefs.addAll(registry!.findAllReferences(sym.symbol));
+    } else {
+      allRefs.addAll(index.findReferences(sym.symbol));
+    }
 
     // For classes, also include constructor call references
     // (constructor calls are indexed as refs to the constructor, not the class)
     if (sym.kindString == 'class') {
-      final constructors = index.membersOf(sym.symbol).where(
-            (m) => m.kindString == 'constructor',
-          );
+      final constructors = registry != null
+          ? registry!.membersOf(sym.symbol).where(
+                (m) => m.kindString == 'constructor',
+              )
+          : index.membersOf(sym.symbol).where(
+                (m) => m.kindString == 'constructor',
+              );
       for (final ctor in constructors) {
-        allRefs.addAll(index.findReferences(ctor.symbol));
+        if (registry != null) {
+          allRefs.addAll(registry!.findAllReferences(ctor.symbol));
+        } else {
+          allRefs.addAll(index.findReferences(ctor.symbol));
+        }
       }
     }
 
@@ -659,7 +722,20 @@ class QueryExecutor {
 
     final referenceMatches = <ReferenceMatch>[];
     for (final ref in uniqueRefs) {
-      final context = await index.getContext(ref);
+      // Get context from the appropriate index
+      String? context;
+      if (registry != null) {
+        // Find which index owns this file and get context from it
+        for (final idx in registry!.allIndexes) {
+          if (idx.files.contains(ref.file)) {
+            context = await idx.getContext(ref);
+            break;
+          }
+        }
+      } else {
+        context = await index.getContext(ref);
+      }
+
       referenceMatches.add(
         ReferenceMatch(
           location: ref,
@@ -674,6 +750,9 @@ class QueryExecutor {
     );
   }
 
+  /// Find aggregated references for multiple symbols.
+  ///
+  /// Uses [registry] for cross-package reference search when available.
   Future<QueryResult> _aggregatedRefs(
     String query,
     List<SymbolInfo> symbols,
@@ -695,12 +774,27 @@ class QueryExecutor {
 
     for (final sym in symbolsToUse.take(10)) {
       // Limit to 10 symbols
-      final refs = index.findReferences(sym.symbol);
+      // Get references from all indexes
+      final refs = registry != null
+          ? registry!.findAllReferences(sym.symbol)
+          : index.findReferences(sym.symbol).toList();
       final container = index.getContainerName(sym.symbol);
 
       final referenceMatches = <ReferenceMatch>[];
       for (final ref in refs) {
-        final context = await index.getContext(ref);
+        // Get context from the appropriate index
+        String? context;
+        if (registry != null) {
+          for (final idx in registry!.allIndexes) {
+            if (idx.files.contains(ref.file)) {
+              context = await idx.getContext(ref);
+              break;
+            }
+          }
+        } else {
+          context = await index.getContext(ref);
+        }
+
         referenceMatches.add(
           ReferenceMatch(
             location: ref,
@@ -758,6 +852,9 @@ class QueryExecutor {
     );
   }
 
+  /// Find implementations for a symbol.
+  ///
+  /// Uses [registry] for cross-package lookups when available.
   Future<QueryResult> _findImplementations(ScipQuery query) async {
     final symbols = _findMatchingSymbols(query);
 
@@ -766,7 +863,10 @@ class QueryExecutor {
     }
 
     final sym = symbols.first;
-    final impls = index.findImplementations(sym.symbol).toList();
+    // Use registry for cross-package lookup if available
+    final impls = registry != null
+        ? registry!.subtypesOf(sym.symbol)
+        : index.findImplementations(sym.symbol).toList();
 
     return SearchResult(impls);
   }
@@ -834,6 +934,9 @@ class QueryExecutor {
     );
   }
 
+  /// Get source code for a symbol.
+  ///
+  /// Uses [registry] for cross-package source access when available.
   Future<QueryResult> _getSource(ScipQuery query) async {
     final symbols = _findMatchingSymbols(query);
 
@@ -842,15 +945,29 @@ class QueryExecutor {
     }
 
     final sym = symbols.first;
-    final def = index.findDefinition(sym.symbol);
+
+    // Try registry first for cross-package support
+    OccurrenceInfo? def;
+    String? source;
+
+    if (registry != null) {
+      def = registry!.findDefinition(sym.symbol);
+      if (def != null) {
+        source = await registry!.getSource(sym.symbol);
+      }
+    } else {
+      def = index.findDefinition(sym.symbol);
+      if (def != null) {
+        source = await index.getSource(sym.symbol);
+      }
+    }
 
     if (def == null) {
       return NotFoundResult(
-        'Symbol "${query.target}" has no definition (may be external)',
+        'Symbol "${query.target}" has no definition',
       );
     }
 
-    final source = await index.getSource(sym.symbol);
     if (source == null) {
       return NotFoundResult('Could not read source for "${query.target}"');
     }
@@ -864,6 +981,8 @@ class QueryExecutor {
   }
 
   /// Get signature for a symbol (declaration without body).
+  ///
+  /// Uses [registry] for cross-package signature access when available.
   Future<QueryResult> _getSignatureResult(ScipQuery query) async {
     final symbols = _findMatchingSymbols(query);
 
@@ -872,11 +991,18 @@ class QueryExecutor {
     }
 
     final sym = symbols.first;
-    final def = index.findDefinition(sym.symbol);
+
+    // Try registry first for cross-package support
+    OccurrenceInfo? def;
+    if (registry != null) {
+      def = registry!.findDefinition(sym.symbol);
+    } else {
+      def = index.findDefinition(sym.symbol);
+    }
 
     if (def == null) {
       return NotFoundResult(
-        'Symbol "${query.target}" has no definition (may be external)',
+        'Symbol "${query.target}" has no definition',
       );
     }
 
@@ -904,11 +1030,15 @@ class QueryExecutor {
   }
 
   /// Extract signature from source code heuristically (fallback).
+  ///
+  /// Uses [registry] for cross-package source access when available.
   Future<String?> _extractSignatureFromSource(
     SymbolInfo sym,
     OccurrenceInfo def,
   ) async {
-    final source = await index.getSource(sym.symbol);
+    final source = registry != null
+        ? await registry!.getSource(sym.symbol)
+        : await index.getSource(sym.symbol);
     if (source == null) return null;
 
     final lines = source.split('\n');
@@ -1115,18 +1245,33 @@ class QueryExecutor {
       );
     }
 
-    final matches = await index.grep(
-      regex,
-      pathFilter: pathFilter,
-      includeGlob: query.includeGlob,
-      excludeGlob: query.excludeGlob,
-      linesBefore: query.linesBefore,
-      linesAfter: query.linesAfter,
-      invertMatch: query.invertMatch,
-      maxPerFile: query.maxCount,
-      multiline: query.multiline,
-      onlyMatching: query.onlyMatching,
-    );
+    // Use registry if available, with optional external package search (-D)
+    final matches = registry != null
+        ? await registry!.grep(
+            regex,
+            pathFilter: pathFilter,
+            includeGlob: query.includeGlob,
+            excludeGlob: query.excludeGlob,
+            linesBefore: query.linesBefore,
+            linesAfter: query.linesAfter,
+            invertMatch: query.invertMatch,
+            maxPerFile: query.maxCount,
+            multiline: query.multiline,
+            onlyMatching: query.onlyMatching,
+            includeExternal: query.searchDeps, // -D or --search-deps
+          )
+        : await index.grep(
+            regex,
+            pathFilter: pathFilter,
+            includeGlob: query.includeGlob,
+            excludeGlob: query.excludeGlob,
+            linesBefore: query.linesBefore,
+            linesAfter: query.linesAfter,
+            invertMatch: query.invertMatch,
+            maxPerFile: query.maxCount,
+            multiline: query.multiline,
+            onlyMatching: query.onlyMatching,
+          );
 
     // Handle files-only output (-l)
     if (query.filesOnly) {
@@ -1250,13 +1395,17 @@ class QueryExecutor {
   // ═══════════════════════════════════════════════════════════════════════
 
   /// Find what a symbol calls.
+  ///
+  /// Uses [registry] for cross-package call graph when available.
   Future<QueryResult> _findCalls(ScipQuery query) async {
     final sym = _resolveSymbol(query);
     if (sym == null) {
       return NotFoundResult('Symbol "${query.target}" not found');
     }
 
-    final calls = index.getCalls(sym.symbol).toList();
+    final calls = registry != null
+        ? registry!.getCalls(sym.symbol)
+        : index.getCalls(sym.symbol).toList();
     return CallGraphResult(
       symbol: sym,
       direction: 'calls',
@@ -1265,13 +1414,17 @@ class QueryExecutor {
   }
 
   /// Find what calls a symbol.
+  ///
+  /// Uses [registry] for cross-package call graph when available.
   Future<QueryResult> _findCallers(ScipQuery query) async {
     final sym = _resolveSymbol(query);
     if (sym == null) {
       return NotFoundResult('Symbol "${query.target}" not found');
     }
 
-    final callers = index.getCallers(sym.symbol).toList();
+    final callers = registry != null
+        ? registry!.getCallers(sym.symbol)
+        : index.getCallers(sym.symbol).toList();
     return CallGraphResult(
       symbol: sym,
       direction: 'callers',
@@ -1401,6 +1554,8 @@ class QueryExecutor {
   }
 
   /// Find dependencies of a symbol.
+  ///
+  /// Uses [registry] for cross-package call graph when available.
   Future<QueryResult> _findDeps(ScipQuery query) async {
     final sym = _resolveSymbol(query);
     if (sym == null) {
@@ -1410,8 +1565,12 @@ class QueryExecutor {
     // Dependencies = what the symbol calls + types it uses
     final deps = <String, SymbolInfo>{};
 
-    // Get direct calls
-    for (final called in index.getCalls(sym.symbol)) {
+    // Get direct calls from all indexes
+    final calls = registry != null
+        ? registry!.getCalls(sym.symbol)
+        : index.getCalls(sym.symbol).toList();
+
+    for (final called in calls) {
       deps[called.symbol] = called;
     }
 
@@ -1419,7 +1578,10 @@ class QueryExecutor {
     if (sym.kind == scip.SymbolInformation_Kind.Class) {
       final children = index.getChildren(sym.symbol);
       for (final childId in children) {
-        for (final called in index.getCalls(childId)) {
+        final childCalls = registry != null
+            ? registry!.getCalls(childId)
+            : index.getCalls(childId).toList();
+        for (final called in childCalls) {
           deps[called.symbol] = called;
         }
       }

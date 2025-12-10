@@ -696,5 +696,353 @@ void fn({bool container = false}) {}
       expect(allIndexes.first, same(projectIndex));
     });
   });
+
+  group('Members filtering with QueryExecutor', () {
+    late Directory srcDir;
+    late ScipIndex projectIndex;
+    late QueryExecutor executor;
+
+    setUp(() async {
+      srcDir = await Directory.systemTemp.createTemp('members_filter');
+      final root = srcDir.path;
+      await File('$root/lib/main.dart').create(recursive: true);
+      await File('$root/lib/main.dart').writeAsString('''
+class Foo {
+  Foo(this.value);
+  final int value;
+  void bar(int x) {}
+}
+''');
+
+      projectIndex = ScipIndex.fromScipIndex(
+        scip.Index(documents: [
+          scip.Document(
+            relativePath: 'lib/main.dart',
+            symbols: [
+              scip.SymbolInformation(
+                symbol: 'proj lib/main.dart/Foo#',
+                kind: scip.SymbolInformation_Kind.Class,
+                displayName: 'Foo',
+              ),
+              scip.SymbolInformation(
+                symbol: 'proj lib/main.dart/Foo#`<constructor>`().',
+                kind: scip.SymbolInformation_Kind.Constructor,
+              ),
+              scip.SymbolInformation(
+                symbol: 'proj lib/main.dart/Foo#`<constructor>`().(value)',
+                kind: scip.SymbolInformation_Kind.Parameter,
+                displayName: 'value',
+              ),
+              scip.SymbolInformation(
+                symbol: 'proj lib/main.dart/Foo#bar().',
+                kind: scip.SymbolInformation_Kind.Method,
+                displayName: 'bar',
+              ),
+              scip.SymbolInformation(
+                symbol: 'proj lib/main.dart/Foo#bar().(x)',
+                kind: scip.SymbolInformation_Kind.Parameter,
+                displayName: 'x',
+              ),
+              scip.SymbolInformation(
+                symbol: 'proj lib/main.dart/Foo#`<get>value`.',
+                kind: scip.SymbolInformation_Kind.Property,
+                displayName: 'value',
+              ),
+            ],
+            occurrences: [
+              scip.Occurrence(
+                symbol: 'proj lib/main.dart/Foo#',
+                range: [0, 0, 5, 1],
+                symbolRoles: scip.SymbolRole.Definition.value,
+                enclosingRange: [0, 0, 5, 1],
+              ),
+              scip.Occurrence(
+                symbol: 'proj lib/main.dart/Foo#`<constructor>`().',
+                range: [1, 2, 1, 13],
+                symbolRoles: scip.SymbolRole.Definition.value,
+              ),
+              scip.Occurrence(
+                symbol: 'proj lib/main.dart/Foo#`<constructor>`().(value)',
+                range: [1, 13, 1, 18],
+                symbolRoles: scip.SymbolRole.Definition.value,
+              ),
+              scip.Occurrence(
+                symbol: 'proj lib/main.dart/Foo#bar().',
+                range: [3, 2, 3, 7],
+                symbolRoles: scip.SymbolRole.Definition.value,
+              ),
+              scip.Occurrence(
+                symbol: 'proj lib/main.dart/Foo#bar().(x)',
+                range: [3, 8, 3, 9],
+                symbolRoles: scip.SymbolRole.Definition.value,
+              ),
+              scip.Occurrence(
+                symbol: 'proj lib/main.dart/Foo#`<get>value`.',
+                range: [2, 8, 2, 13],
+                symbolRoles: scip.SymbolRole.Definition.value,
+              ),
+            ],
+          ),
+        ]),
+        projectRoot: root,
+        sourceRoot: root,
+      );
+
+      executor = QueryExecutor(projectIndex);
+    });
+
+    tearDown(() async {
+      await srcDir.delete(recursive: true);
+    });
+
+    test('members excludes parameters in output', () async {
+      final result = await executor.execute('members Foo');
+      expect(result, isA<MembersResult>());
+      final members = (result as MembersResult).members;
+      final kinds = members.map((m) => m.kindString).toList();
+      expect(kinds, isNot(contains('parameter')));
+      expect(kinds, containsAll(['constructor', 'method', 'property']));
+    });
+  });
+
+  group('Implementations and hierarchy', () {
+    late ScipIndex index;
+
+    setUp(() {
+      index = ScipIndex.fromScipIndex(
+        scip.Index(documents: [
+          scip.Document(
+            relativePath: 'lib/a.dart',
+            symbols: [
+              scip.SymbolInformation(
+                symbol: 'pkg lib/a.dart/Base#',
+                kind: scip.SymbolInformation_Kind.Class,
+                displayName: 'Base',
+              ),
+              scip.SymbolInformation(
+                symbol: 'pkg lib/a.dart/Impl#',
+                kind: scip.SymbolInformation_Kind.Class,
+                displayName: 'Impl',
+                relationships: [
+                  scip.Relationship(
+                    symbol: 'pkg lib/a.dart/Base#',
+                    isImplementation: true,
+                  ),
+                ],
+              ),
+            ],
+            occurrences: [
+              scip.Occurrence(
+                symbol: 'pkg lib/a.dart/Base#',
+                range: [0, 0, 1, 1],
+                symbolRoles: scip.SymbolRole.Definition.value,
+              ),
+              scip.Occurrence(
+                symbol: 'pkg lib/a.dart/Impl#',
+                range: [3, 0, 4, 1],
+                symbolRoles: scip.SymbolRole.Definition.value,
+              ),
+            ],
+          ),
+        ]),
+        projectRoot: '/tmp',
+        sourceRoot: '/tmp',
+      );
+    });
+
+    test('findImplementations finds subtype', () {
+      final impls = index.findImplementations('pkg lib/a.dart/Base#').toList();
+      expect(impls.map((s) => s.displayName), contains('Impl'));
+    });
+
+    test('supertypesOf returns base from relationships', () {
+      final supers = index.supertypesOf('pkg lib/a.dart/Impl#').toList();
+      expect(supers.map((s) => s.displayName), contains('Base'));
+    });
+  });
+
+  group('Source extraction bounds', () {
+    late Directory dir;
+    late ScipIndex index;
+
+    setUp(() async {
+      dir = await Directory.systemTemp.createTemp('source_bounds');
+      final root = dir.path;
+      await File('$root/lib/main.dart').create(recursive: true);
+      await File('$root/lib/main.dart').writeAsString('''
+class C {
+  void f() {
+    print('x');
+  }
+}
+''');
+
+      index = ScipIndex.fromScipIndex(
+        scip.Index(documents: [
+          scip.Document(
+            relativePath: 'lib/main.dart',
+            symbols: [
+              scip.SymbolInformation(
+                symbol: 'pkg lib/main.dart/C#',
+                kind: scip.SymbolInformation_Kind.Class,
+                displayName: 'C',
+              ),
+              scip.SymbolInformation(
+                symbol: 'pkg lib/main.dart/C#f().',
+                kind: scip.SymbolInformation_Kind.Method,
+                displayName: 'f',
+              ),
+            ],
+            occurrences: [
+              scip.Occurrence(
+                symbol: 'pkg lib/main.dart/C#',
+                range: [0, 0, 5, 1],
+                symbolRoles: scip.SymbolRole.Definition.value,
+                enclosingRange: [0, 0, 5, 1],
+              ),
+              scip.Occurrence(
+                symbol: 'pkg lib/main.dart/C#f().',
+                range: [1, 2, 3, 3],
+                symbolRoles: scip.SymbolRole.Definition.value,
+                enclosingRange: [1, 2, 4, 1],
+              ),
+            ],
+          ),
+        ]),
+        projectRoot: root,
+        sourceRoot: root,
+      );
+    });
+
+    tearDown(() async {
+      await dir.delete(recursive: true);
+    });
+
+    test('getSource respects enclosingEndLine', () async {
+      final src = await index.getSource('pkg lib/main.dart/C#f().');
+      expect(src, contains("void f() {"));
+      expect(src, contains("print('x');"));
+      expect(src, isNot(contains('class C')));
+    });
+  });
+
+  group('Grep include/exclude globs', () {
+    late Directory dir;
+    late ScipIndex index;
+    late IndexRegistry registry;
+
+    setUp(() async {
+      dir = await Directory.systemTemp.createTemp('grep_globs');
+      final root = dir.path;
+      await File('$root/lib/a.dart').create(recursive: true);
+      await File('$root/lib/b.txt').create(recursive: true);
+      await File('$root/lib/a.dart').writeAsString('hello dart');
+      await File('$root/lib/b.txt').writeAsString('hello text');
+
+      index = ScipIndex.fromScipIndex(
+        scip.Index(documents: [
+          scip.Document(
+            relativePath: 'lib/a.dart',
+            symbols: [],
+            occurrences: [],
+          ),
+          scip.Document(
+            relativePath: 'lib/b.txt',
+            symbols: [],
+            occurrences: [],
+          ),
+        ]),
+        projectRoot: root,
+        sourceRoot: root,
+      );
+
+      registry = IndexRegistry.withIndexes(projectIndex: index);
+    });
+
+    tearDown(() async {
+      await dir.delete(recursive: true);
+    });
+
+    test('--include matches only dart file', () async {
+      final matches = await registry.grep(
+        RegExp('hello'),
+        includeGlob: '*.dart',
+      );
+      final files = matches.map((m) => m.file).toSet();
+      expect(files, contains('lib/a.dart'));
+      expect(files, isNot(contains('lib/b.txt')));
+    });
+
+    test('--exclude skips txt file', () async {
+      final matches = await registry.grep(
+        RegExp('hello'),
+        excludeGlob: '*.txt',
+      );
+      final files = matches.map((m) => m.file).toSet();
+      expect(files, contains('lib/a.dart'));
+      expect(files, isNot(contains('lib/b.txt')));
+    });
+  });
+
+  group('Cross-index references', () {
+    late ScipIndex projectIndex;
+    late ScipIndex packageIndex;
+    late IndexRegistry registry;
+
+    setUp(() {
+      projectIndex = ScipIndex.fromScipIndex(
+        scip.Index(documents: [
+          scip.Document(
+            relativePath: 'lib/main.dart',
+            symbols: [],
+            occurrences: [
+              scip.Occurrence(
+                symbol: 'external_pkg lib/utils.dart/ExternalHelper#',
+                range: [0, 0, 0, 5],
+              ),
+            ],
+          ),
+        ]),
+        projectRoot: '/proj',
+        sourceRoot: '/proj',
+      );
+
+      packageIndex = ScipIndex.fromScipIndex(
+        scip.Index(documents: [
+          scip.Document(
+            relativePath: 'lib/utils.dart',
+            symbols: [
+              scip.SymbolInformation(
+                symbol: 'external_pkg lib/utils.dart/ExternalHelper#',
+                kind: scip.SymbolInformation_Kind.Class,
+              ),
+            ],
+            occurrences: [
+              scip.Occurrence(
+                symbol: 'external_pkg lib/utils.dart/ExternalHelper#',
+                range: [0, 0, 0, 10],
+                symbolRoles: scip.SymbolRole.Definition.value,
+              ),
+            ],
+          ),
+        ]),
+        projectRoot: '/cache/ext',
+        sourceRoot: '/ext',
+      );
+
+      registry = IndexRegistry.withIndexes(
+        projectIndex: projectIndex,
+        packageIndexes: {'external_pkg-1.0.0': packageIndex},
+      );
+    });
+
+    test('findAllReferences returns refs across indexes (project ref)', () {
+      final refs = registry.findAllReferences(
+        'external_pkg lib/utils.dart/ExternalHelper#',
+      );
+      final files = refs.map((r) => r.file).toSet();
+      expect(files, contains('lib/main.dart')); // project ref
+    });
+  });
 }
 

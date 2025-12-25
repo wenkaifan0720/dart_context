@@ -288,6 +288,8 @@ class ExternalIndexBuilder {
   Future<BatchIndexResult> indexDependencies(
     String projectPath, {
     bool forceReindex = false,
+    void Function(String message)? onProgress,
+    int concurrency = 4,
   }) async {
     final lockfile = File('$projectPath/pubspec.lock');
     if (!await lockfile.exists()) {
@@ -300,6 +302,7 @@ class ExternalIndexBuilder {
 
     final content = await lockfile.readAsString();
     final packages = parsePubspecLock(content);
+    onProgress?.call('Found ${packages.length} dependencies to index');
 
     final pubCachePath = await _getPubCachePath();
     if (pubCachePath == null) {
@@ -310,12 +313,14 @@ class ExternalIndexBuilder {
       );
     }
 
-    final results = <PackageIndexResult>[];
+    // Categorize packages: to index vs skip
+    final toIndex = <({String name, String version, String path})>[];
+    final skippedResults = <PackageIndexResult>[];
 
     for (final pkg in packages) {
       // Skip if already indexed (unless forcing)
       if (!forceReindex && await _registry.hasPackageIndex(pkg.name, pkg.version)) {
-        results.add(PackageIndexResult(
+        skippedResults.add(PackageIndexResult(
           name: pkg.name,
           version: pkg.version,
           skipped: true,
@@ -327,7 +332,7 @@ class ExternalIndexBuilder {
       // Find package in pub cache
       final packagePath = '$pubCachePath/hosted/pub.dev/${pkg.name}-${pkg.version}';
       if (!await Directory(packagePath).exists()) {
-        results.add(PackageIndexResult(
+        skippedResults.add(PackageIndexResult(
           name: pkg.name,
           version: pkg.version,
           skipped: true,
@@ -336,20 +341,47 @@ class ExternalIndexBuilder {
         continue;
       }
 
-      // Index it
-      final result = await indexPackage(pkg.name, pkg.version, packagePath);
-      results.add(PackageIndexResult(
-        name: pkg.name,
-        version: pkg.version,
-        success: result.success,
-        error: result.error,
-        symbolCount: result.stats?['symbols'] as int?,
-      ));
+      toIndex.add((name: pkg.name, version: pkg.version, path: packagePath));
     }
+
+    onProgress?.call('Indexing ${toIndex.length} packages (${skippedResults.length} skipped)...');
+
+    // Process packages in parallel with concurrency limit
+    final indexedResults = <PackageIndexResult>[];
+    var indexed = 0;
+
+    // Process in batches for controlled concurrency
+    for (var i = 0; i < toIndex.length; i += concurrency) {
+      final batch = toIndex.skip(i).take(concurrency).toList();
+      
+      final batchFutures = batch.map((pkg) async {
+        final result = await indexPackage(pkg.name, pkg.version, pkg.path);
+        return PackageIndexResult(
+          name: pkg.name,
+          version: pkg.version,
+          success: result.success,
+          error: result.error,
+          symbolCount: result.stats?['symbols'] as int?,
+        );
+      });
+
+      final batchResults = await Future.wait(batchFutures);
+      indexedResults.addAll(batchResults);
+
+      // Report progress for successful packages
+      for (final result in batchResults) {
+        if (result.success) {
+          indexed++;
+          onProgress?.call('Indexed ${result.name}: ${result.symbolCount} symbols');
+        }
+      }
+    }
+
+    onProgress?.call('Completed: $indexed indexed, ${skippedResults.length} skipped');
 
     return BatchIndexResult(
       success: true,
-      results: results,
+      results: [...skippedResults, ...indexedResults],
     );
   }
 

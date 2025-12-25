@@ -461,10 +461,19 @@ class IndexRegistry {
     String pattern, {
     IndexScope scope = IndexScope.projectAndLoaded,
   }) {
+    final seen = <String>{};
     final results = <SymbolInfo>[];
 
+    void addUnique(Iterable<SymbolInfo> symbols) {
+      for (final sym in symbols) {
+        if (seen.add(sym.symbol)) {
+          results.add(sym);
+        }
+      }
+    }
+
     // Always search project
-    results.addAll(_projectIndex.findSymbols(pattern));
+    addUnique(_projectIndex.findSymbols(pattern));
 
     if (scope == IndexScope.project) {
       return results;
@@ -472,11 +481,11 @@ class IndexRegistry {
 
     // Search loaded externals
     if (_sdkIndex != null) {
-      results.addAll(_sdkIndex!.findSymbols(pattern));
+      addUnique(_sdkIndex!.findSymbols(pattern));
     }
 
     for (final index in _packageIndexes.values) {
-      results.addAll(index.findSymbols(pattern));
+      addUnique(index.findSymbols(pattern));
     }
 
     return results;
@@ -755,8 +764,4 @@ enum IndexScope {
 
   /// Search project and already loaded external indexes.
   projectAndLoaded,
-
-  /// Search all available indexes (may trigger loading).
-  /// Note: This requires knowing which packages to load.
-  // all, // TODO: Implement with dependency resolution
 }

@@ -7,6 +7,10 @@ import '../dart_context.dart';
 import '../index/external_index_builder.dart';
 import '../index/index_registry.dart';
 import '../index/scip_index.dart';
+import '../utils/pubspec_utils.dart';
+
+/// Version of dart_context package.
+const dartContextVersion = '0.1.0';
 
 /// Mix this in to any MCPServer to add Dart code intelligence via dart_context.
 ///
@@ -83,16 +87,30 @@ base mixin DartContextSupport on ToolsSupport, RootsTrackingSupport {
 
   @override
   Future<void> shutdown() async {
-    for (final context in _contexts.values) {
-      await context.dispose();
-    }
+    // Copy to list to avoid concurrent modification
+    final contexts = _contexts.values.toList();
+    final watchers = _packageConfigWatchers.values.toList();
+
     _contexts.clear();
-    for (final watcher in _packageConfigWatchers.values) {
-      await watcher.cancel();
-    }
     _packageConfigWatchers.clear();
     _staleRoots.clear();
+
+    for (final context in contexts) {
+      await context.dispose();
+    }
+    for (final watcher in watchers) {
+      await watcher.cancel();
+    }
+
     await super.shutdown();
+  }
+
+  /// Get the current Dart SDK version (major.minor.patch only).
+  String? _getCurrentSdkVersion() {
+    // Platform.version is like "3.2.0 (stable) ..."
+    final versionMatch =
+        RegExp(r'^(\d+\.\d+\.\d+)').firstMatch(Platform.version);
+    return versionMatch?.group(1);
   }
 
   /// Start watching package_config.json for changes.
@@ -372,7 +390,10 @@ base mixin DartContextSupport on ToolsSupport, RootsTrackingSupport {
     final builder = ExternalIndexBuilder(registry: registry);
 
     try {
-      final result = await builder.indexDependencies(projectPath);
+      final result = await builder.indexDependencies(
+        projectPath,
+        onProgress: (msg) => log(LoggingLevel.info, msg),
+      );
 
       if (!result.success) {
         return CallToolResult(
@@ -450,6 +471,11 @@ base mixin DartContextSupport on ToolsSupport, RootsTrackingSupport {
     // Create fresh context
     try {
       log(LoggingLevel.info, 'Refreshing DartContext for: $rootPath');
+      if (fullReindex) {
+        log(LoggingLevel.info, 'Full reindex requested (ignoring cache)');
+      }
+      log(LoggingLevel.info, 'Analyzing project files...');
+
       final context = await DartContext.open(
         rootPath,
         watch: true,
@@ -457,6 +483,8 @@ base mixin DartContextSupport on ToolsSupport, RootsTrackingSupport {
         loadDependencies: true,
       );
       _contexts[targetRoot.uri] = context;
+
+      log(LoggingLevel.info, 'Loading dependencies...');
 
       // Re-establish package_config watcher
       _watchPackageConfig(targetRoot.uri, rootPath);
@@ -513,7 +541,7 @@ base mixin DartContextSupport on ToolsSupport, RootsTrackingSupport {
     }
 
     final output = StringBuffer();
-    output.writeln('## Dart Context Status');
+    output.writeln('## Dart Context Status (v$dartContextVersion)');
     output.writeln('');
 
     if (context == null) {
@@ -557,11 +585,12 @@ base mixin DartContextSupport on ToolsSupport, RootsTrackingSupport {
 
     // Also show available indexes on disk
     final tempIndex = ScipIndex.empty(projectRoot: '.');
-    final registry = IndexRegistry(projectIndex: tempIndex);
-    final builder = ExternalIndexBuilder(registry: registry);
+    final tempRegistry = IndexRegistry(projectIndex: tempIndex);
+    final builder = ExternalIndexBuilder(registry: tempRegistry);
 
     final sdkVersions = await builder.listSdkIndexes();
     final packages = await builder.listPackageIndexes();
+    final packageSet = packages.map((p) => p.name).toSet();
 
     output.writeln('');
     output.writeln('### Available Indexes (on disk)');
@@ -569,6 +598,70 @@ base mixin DartContextSupport on ToolsSupport, RootsTrackingSupport {
     output.writeln(
         'SDK versions: ${sdkVersions.isEmpty ? "(none)" : sdkVersions.join(", ")}');
     output.writeln('Package indexes: ${packages.length}');
+
+    // Check for Flutter project and give hints
+    if (rootPath != null) {
+      final pubspecFile = File('$rootPath/pubspec.yaml');
+      if (await pubspecFile.exists()) {
+        final pubspec = await pubspecFile.readAsString();
+        final isFlutter =
+            pubspec.contains('flutter:') || pubspec.contains('flutter_test:');
+
+        output.writeln('');
+        output.writeln('### Recommendations');
+        output.writeln('');
+
+        // Check if Flutter indexes are missing for Flutter project
+        final hasFlutterIndexes = packages.any((p) => p.name == 'flutter');
+        if (isFlutter && !hasFlutterIndexes) {
+          output.writeln(
+              '⚠️ Flutter project detected but Flutter SDK not indexed.');
+          output.writeln(
+              '   Run: `dart_index_flutter` to enable widget hierarchy queries.');
+          output.writeln('');
+        }
+
+        // Check for missing pub dependencies
+        final lockFile = File('$rootPath/pubspec.lock');
+        if (await lockFile.exists()) {
+          final lockContent = await lockFile.readAsString();
+          final deps = parsePubspecLock(lockContent);
+          final missingDeps =
+              deps.where((d) => !packageSet.contains(d.name)).toList();
+
+          if (missingDeps.isNotEmpty) {
+            output
+                .writeln('📦 ${missingDeps.length} dependencies not indexed:');
+            final toShow = missingDeps.take(5).map((d) => d.name).toList();
+            output.writeln(
+                '   ${toShow.join(", ")}${missingDeps.length > 5 ? " ..." : ""}');
+            output.writeln(
+                '   Run: `dart_index_deps` to index all dependencies.');
+            output.writeln('');
+          } else if (deps.isNotEmpty) {
+            output.writeln('✓ All ${deps.length} dependencies are indexed.');
+          }
+        } else {
+          output.writeln('ℹ️ No pubspec.lock found. Run `dart pub get` first.');
+        }
+
+        if (!isFlutter && sdkVersions.isEmpty) {
+          output
+              .writeln('ℹ️ Dart SDK not indexed. SDK symbols won\'t resolve.');
+        }
+
+        // Check if SDK version has changed since indexing
+        if (sdkVersions.isNotEmpty) {
+          final currentSdkVersion = _getCurrentSdkVersion();
+          if (currentSdkVersion != null &&
+              !sdkVersions.contains(currentSdkVersion)) {
+            output.writeln(
+                '⚠️ Current SDK ($currentSdkVersion) differs from indexed: ${sdkVersions.join(", ")}');
+            output.writeln('   Consider re-indexing for accurate results.');
+          }
+        }
+      }
+    }
 
     return CallToolResult(
       content: [TextContent(text: output.toString())],

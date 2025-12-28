@@ -21,7 +21,7 @@ import 'scip_index.dart';
 
 /// Builds SCIP indexes for external dependencies (SDK, packages).
 ///
-/// Pre-computes indexes that can be loaded on demand by [IndexRegistry].
+/// Pre-computes indexes that can be loaded on demand by [PackageRegistry].
 ///
 /// ## Usage
 ///

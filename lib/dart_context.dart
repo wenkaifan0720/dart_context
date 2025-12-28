@@ -72,8 +72,6 @@ export 'src/index/package_registry.dart'
         ExternalPackageIndex,
         ExternalPackageType,
         DependencyLoadResult,
-        // Backward compatibility
-        IndexRegistry,
         IndexScope;
 export 'src/index/scip_index.dart'
     show ScipIndex, SymbolInfo, OccurrenceInfo, GrepMatchData;

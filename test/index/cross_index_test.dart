@@ -1,8 +1,8 @@
 // Tests for cross-index source operations:
-// - IndexRegistry.findOwningIndex
-// - IndexRegistry.findDefinition across indexes
-// - IndexRegistry.getSource with sourceRoot
-// - IndexRegistry.findAllReferences
+// - PackageRegistry.findOwningIndex
+// - PackageRegistry.findDefinition across indexes
+// - PackageRegistry.getSource with sourceRoot
+// - PackageRegistry.findAllReferences
 // - QueryExecutor using registry for source/sig/refs/calls
 
 // ignore_for_file: implementation_imports
@@ -84,10 +84,10 @@ class ExternalHelper {
     });
   });
 
-  group('IndexRegistry findOwningIndex', () {
+  group('PackageRegistry findOwningIndex', () {
     late ScipIndex projectIndex;
     late ScipIndex packageIndex;
-    late IndexRegistry registry;
+    late PackageRegistry registry;
 
     setUp(() {
       projectIndex = ScipIndex.empty(projectRoot: projectRoot);
@@ -133,7 +133,7 @@ class ExternalHelper {
         sourceRoot: externalSourceRoot,
       );
 
-      registry = IndexRegistry.withIndexes(
+      registry = PackageRegistry.forTesting(
         projectIndex: projectIndex,
         packageIndexes: {'external_pkg-1.0.0': packageIndex},
       );
@@ -161,10 +161,10 @@ class ExternalHelper {
     });
   });
 
-  group('IndexRegistry findDefinition', () {
+  group('PackageRegistry findDefinition', () {
     late ScipIndex projectIndex;
     late ScipIndex packageIndex;
-    late IndexRegistry registry;
+    late PackageRegistry registry;
 
     setUp(() {
       projectIndex = ScipIndex.empty(projectRoot: projectRoot);
@@ -208,7 +208,7 @@ class ExternalHelper {
         sourceRoot: externalSourceRoot,
       );
 
-      registry = IndexRegistry.withIndexes(
+      registry = PackageRegistry.forTesting(
         projectIndex: projectIndex,
         packageIndexes: {'external_pkg-1.0.0': packageIndex},
       );
@@ -236,9 +236,9 @@ class ExternalHelper {
     });
   });
 
-  group('IndexRegistry getSource with sourceRoot', () {
+  group('PackageRegistry getSource with sourceRoot', () {
     late ScipIndex packageIndex;
-    late IndexRegistry registry;
+    late PackageRegistry registry;
 
     setUp(() {
       final projectIndex = ScipIndex.empty(projectRoot: projectRoot);
@@ -267,7 +267,7 @@ class ExternalHelper {
         sourceRoot: externalSourceRoot,
       );
 
-      registry = IndexRegistry.withIndexes(
+      registry = PackageRegistry.forTesting(
         projectIndex: projectIndex,
         packageIndexes: {'external_pkg-1.0.0': packageIndex},
       );
@@ -293,10 +293,10 @@ class ExternalHelper {
     });
   });
 
-  group('IndexRegistry findAllReferences', () {
+  group('PackageRegistry findAllReferences', () {
     late ScipIndex projectIndex;
     late ScipIndex packageIndex;
-    late IndexRegistry registry;
+    late PackageRegistry registry;
 
     setUp(() {
       projectIndex = ScipIndex.empty(projectRoot: projectRoot);
@@ -341,7 +341,7 @@ class ExternalHelper {
         sourceRoot: externalSourceRoot,
       );
 
-      registry = IndexRegistry.withIndexes(
+      registry = PackageRegistry.forTesting(
         projectIndex: projectIndex,
         packageIndexes: {'external_pkg-1.0.0': packageIndex},
       );
@@ -359,15 +359,15 @@ class ExternalHelper {
     });
   });
 
-  group('IndexRegistry getCalls and getCallers', () {
+  group('PackageRegistry getCalls and getCallers', () {
     late ScipIndex projectIndex;
-    late IndexRegistry registry;
+    late PackageRegistry registry;
 
     setUp(() {
       projectIndex = ScipIndex.empty(projectRoot: projectRoot);
       // Note: Call graph is built during indexing, so this test just
       // verifies the registry method calls the underlying index
-      registry = IndexRegistry.withIndexes(
+      registry = PackageRegistry.forTesting(
         projectIndex: projectIndex,
       );
     });
@@ -386,7 +386,7 @@ class ExternalHelper {
   group('QueryExecutor with registry', () {
     late ScipIndex projectIndex;
     late ScipIndex packageIndex;
-    late IndexRegistry registry;
+    late PackageRegistry registry;
     late QueryExecutor executor;
 
     setUp(() {
@@ -435,7 +435,7 @@ class ExternalHelper {
         sourceRoot: externalSourceRoot,
       );
 
-      registry = IndexRegistry.withIndexes(
+      registry = PackageRegistry.forTesting(
         projectIndex: projectIndex,
         packageIndexes: {'external_pkg-1.0.0': packageIndex},
       );
@@ -468,7 +468,7 @@ class ExternalHelper {
   group('Qualified lookup across indexes', () {
     late ScipIndex projectIndex;
     late ScipIndex packageIndex;
-    late IndexRegistry registry;
+    late PackageRegistry registry;
 
     setUp(() {
       projectIndex = ScipIndex.empty(projectRoot: projectRoot);
@@ -506,7 +506,7 @@ class ExternalHelper {
         sourceRoot: externalSourceRoot,
       );
 
-      registry = IndexRegistry.withIndexes(
+      registry = PackageRegistry.forTesting(
         projectIndex: projectIndex,
         packageIndexes: {'external_pkg-1.0.0': packageIndex},
       );
@@ -593,7 +593,7 @@ void fn({bool container = false}) {}
     late Directory rootDir;
     late ScipIndex projectIndex;
     late ScipIndex packageIndex;
-    late IndexRegistry registry;
+    late PackageRegistry registry;
 
     setUp(() async {
       rootDir = await Directory.systemTemp.createTemp('grep_deps');
@@ -630,7 +630,7 @@ void fn({bool container = false}) {}
         sourceRoot: extRoot,
       );
 
-      registry = IndexRegistry.withIndexes(
+      registry = PackageRegistry.forTesting(
         projectIndex: projectIndex,
         packageIndexes: {'external-1.0.0': packageIndex},
       );
@@ -661,14 +661,14 @@ void fn({bool container = false}) {}
     });
   });
 
-  group('IndexRegistry allIndexes', () {
+  group('PackageRegistry allIndexes', () {
     test('returns project, SDK, and package indexes', () {
       final projectIndex = ScipIndex.empty(projectRoot: '/project');
       final sdkIndex = ScipIndex.empty(projectRoot: '/sdk');
       final pkg1Index = ScipIndex.empty(projectRoot: '/pkg1');
       final pkg2Index = ScipIndex.empty(projectRoot: '/pkg2');
 
-      final registry = IndexRegistry.withIndexes(
+      final registry = PackageRegistry.forTesting(
         projectIndex: projectIndex,
         sdkIndex: sdkIndex,
         packageIndexes: {
@@ -687,7 +687,7 @@ void fn({bool container = false}) {}
 
     test('returns only project when no external indexes', () {
       final projectIndex = ScipIndex.empty(projectRoot: '/project');
-      final registry = IndexRegistry.withIndexes(
+      final registry = PackageRegistry.forTesting(
         projectIndex: projectIndex,
       );
 
@@ -929,7 +929,7 @@ class C {
   group('Grep include/exclude globs', () {
     late Directory dir;
     late ScipIndex index;
-    late IndexRegistry registry;
+    late PackageRegistry registry;
 
     setUp(() async {
       dir = await Directory.systemTemp.createTemp('grep_globs');
@@ -956,7 +956,7 @@ class C {
         sourceRoot: root,
       );
 
-      registry = IndexRegistry.withIndexes(projectIndex: index);
+      registry = PackageRegistry.forTesting(projectIndex: index);
     });
 
     tearDown(() async {
@@ -987,7 +987,7 @@ class C {
   group('Cross-index references', () {
     late ScipIndex projectIndex;
     late ScipIndex packageIndex;
-    late IndexRegistry registry;
+    late PackageRegistry registry;
 
     setUp(() {
       projectIndex = ScipIndex.fromScipIndex(
@@ -1030,7 +1030,7 @@ class C {
         sourceRoot: '/ext',
       );
 
-      registry = IndexRegistry.withIndexes(
+      registry = PackageRegistry.forTesting(
         projectIndex: projectIndex,
         packageIndexes: {'external_pkg-1.0.0': packageIndex},
       );

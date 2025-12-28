@@ -5,9 +5,9 @@ import 'package:scip_dart/src/gen/scip.pb.dart' as scip;
 import 'package:test/test.dart';
 
 void main() {
-  group('IndexRegistry', () {
+  group('PackageRegistry', () {
     late ScipIndex projectIndex;
-    late IndexRegistry registry;
+    late PackageRegistry registry;
 
     setUp(() {
       // Create a project index with some symbols
@@ -52,7 +52,7 @@ void main() {
         ),
       );
 
-      registry = IndexRegistry.withIndexes(projectIndex: projectIndex);
+      registry = PackageRegistry.forTesting(projectIndex: projectIndex);
     });
 
     group('basic operations', () {
@@ -143,17 +143,9 @@ void main() {
       });
     });
 
-    group('unload operations', () {
-      test('unloadAll clears all external indexes', () {
-        registry.unloadAll();
-        expect(registry.sdkIndex, isNull);
-        expect(registry.packageIndexes, isEmpty);
-      });
-    });
-
     group('cross-index queries with SDK', () {
       late ScipIndex mockSdkIndex;
-      late IndexRegistry crossRegistry;
+      late PackageRegistry crossRegistry;
 
       setUp(() {
         // Create a mock SDK index
@@ -207,7 +199,7 @@ void main() {
         );
 
         // Create registry with both project and SDK index
-        crossRegistry = IndexRegistry.withIndexes(
+        crossRegistry = PackageRegistry.forTesting(
           projectIndex: projectIndex,
           sdkIndex: mockSdkIndex,
           sdkVersion: '3.0.0',
@@ -271,7 +263,7 @@ void main() {
 
     group('cross-index queries with packages', () {
       late ScipIndex mockPackageIndex;
-      late IndexRegistry crossRegistry;
+      late PackageRegistry crossRegistry;
 
       setUp(() {
         // Create a mock package index
@@ -310,7 +302,7 @@ void main() {
         );
 
         // Create registry with package index
-        crossRegistry = IndexRegistry.withIndexes(
+        crossRegistry = PackageRegistry.forTesting(
           projectIndex: projectIndex,
           packageIndexes: {'collection-1.18.0': mockPackageIndex},
         );
@@ -348,7 +340,7 @@ void main() {
     group('stats with loaded indexes', () {
       test('stats shows SDK info when loaded', () {
         final sdkIndex = ScipIndex.empty(projectRoot: '/sdk');
-        final reg = IndexRegistry.withIndexes(
+        final reg = PackageRegistry.forTesting(
           projectIndex: projectIndex,
           sdkIndex: sdkIndex,
           sdkVersion: '3.2.0',
@@ -361,7 +353,7 @@ void main() {
 
       test('stats shows package count', () {
         final pkgIndex = ScipIndex.empty(projectRoot: '/pkg');
-        final reg = IndexRegistry.withIndexes(
+        final reg = PackageRegistry.forTesting(
           projectIndex: projectIndex,
           packageIndexes: {
             'pkg1-1.0.0': pkgIndex,
@@ -413,7 +405,7 @@ void main() {
           ),
         );
 
-        final reg = IndexRegistry.withIndexes(
+        final reg = PackageRegistry.forTesting(
           projectIndex: projectIndex,
           packageIndexes: {
             'ext1-1.0.0': extIndex,
@@ -429,7 +421,7 @@ void main() {
     });
 
     group('cross-index helpers', () {
-      late IndexRegistry regWithExternal;
+      late PackageRegistry regWithExternal;
 
       setUp(() {
         // Create external index with symbols
@@ -455,7 +447,7 @@ void main() {
           ),
         );
 
-        regWithExternal = IndexRegistry.withIndexes(
+        regWithExternal = PackageRegistry.forTesting(
           projectIndex: projectIndex,
           packageIndexes: {'ext-1.0.0': extIndex},
         );
@@ -535,7 +527,7 @@ void main() {
           ),
         );
 
-        final reg = IndexRegistry.withIndexes(
+        final reg = PackageRegistry.forTesting(
           projectIndex: projectIndex,
           packageIndexes: {'ext-1.0.0': extIndex},
         );

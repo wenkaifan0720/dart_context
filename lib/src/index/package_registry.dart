@@ -19,8 +19,17 @@ class LocalPackageIndex {
   LocalPackageIndex({
     required this.name,
     required this.path,
-    required this.indexer,
-  });
+    required IncrementalScipIndexer indexer,
+  })  : _indexer = indexer,
+        _testIndex = null;
+
+  /// Create a test instance with a direct index (no indexer).
+  LocalPackageIndex.forTesting({
+    required this.name,
+    required this.path,
+    required ScipIndex index,
+  })  : _indexer = null,
+        _testIndex = index;
 
   /// Package name.
   final String name;
@@ -28,15 +37,26 @@ class LocalPackageIndex {
   /// Absolute path to package root.
   final String path;
 
-  /// The indexer that manages this package's index.
-  final IncrementalScipIndexer indexer;
+  /// The indexer that manages this package's index (null for test instances).
+  final IncrementalScipIndexer? _indexer;
+
+  /// Direct index for testing.
+  final ScipIndex? _testIndex;
+
+  /// Get the indexer (throws if this is a test instance).
+  IncrementalScipIndexer get indexer {
+    if (_indexer == null) {
+      throw StateError('This LocalPackageIndex was created for testing without an indexer');
+    }
+    return _indexer!;
+  }
 
   /// The SCIP index for this package.
-  ScipIndex get index => indexer.index;
+  ScipIndex get index => _testIndex ?? _indexer!.index;
 
   /// Dispose the indexer.
   void dispose() {
-    indexer.dispose();
+    _indexer?.dispose();
   }
 }
 
@@ -123,25 +143,11 @@ class PackageRegistry {
     String? globalCachePath,
   }) : _globalCachePath = globalCachePath ?? CachePaths.globalCacheDir;
 
-  /// Backward compatibility constructor.
+  /// Create a registry with a single test index.
   ///
-  /// Creates a registry from a pre-existing project index.
-  /// Used by tests that create indexes manually.
-  @Deprecated('Use PackageRegistry() and addLocalPackage() instead')
-  factory PackageRegistry.fromProjectIndex(ScipIndex projectIndex) {
-    final registry = PackageRegistry(
-      rootPath: projectIndex.projectRoot,
-    );
-    // Add as a synthetic local package
-    registry._syntheticProjectIndex = projectIndex;
-    return registry;
-  }
-
-  /// Backward compatibility constructor for tests.
-  ///
-  /// Creates a registry with pre-populated indexes.
-  @Deprecated('Use PackageRegistry() and load methods instead')
-  factory PackageRegistry.withIndexes({
+  /// This is a convenience factory for unit tests that need to
+  /// create a registry with a pre-built index.
+  factory PackageRegistry.forTesting({
     required ScipIndex projectIndex,
     ScipIndex? sdkIndex,
     String? sdkVersion,
@@ -152,7 +158,13 @@ class PackageRegistry {
     final registry = PackageRegistry(
       rootPath: projectIndex.projectRoot,
     );
-    registry._syntheticProjectIndex = projectIndex;
+
+    // Add the project as a local package
+    registry._localPackages['test'] = LocalPackageIndex.forTesting(
+      name: 'test',
+      path: projectIndex.projectRoot,
+      index: projectIndex,
+    );
 
     if (sdkIndex != null) {
       registry._sdkIndex = ExternalPackageIndex(
@@ -201,8 +213,6 @@ class PackageRegistry {
     return registry;
   }
 
-  /// Synthetic project index for backward compat.
-  ScipIndex? _syntheticProjectIndex;
 
   /// The root path for this workspace/project.
   final String rootPath;
@@ -243,9 +253,6 @@ class PackageRegistry {
 
   /// All local package indexes.
   Iterable<ScipIndex> get allLocalIndexes sync* {
-    if (_syntheticProjectIndex != null) {
-      yield _syntheticProjectIndex!;
-    }
     for (final pkg in _localPackages.values) {
       yield pkg.index;
     }
@@ -942,30 +949,14 @@ class PackageRegistry {
     return results;
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // Backward Compatibility (for QueryExecutor)
-  // ─────────────────────────────────────────────────────────────────────────
-
-  /// The first local index (used as "project index" for compatibility).
+  /// The first local index (used as the "primary" project index).
   ScipIndex get projectIndex {
-    if (_syntheticProjectIndex != null) return _syntheticProjectIndex!;
     return _localPackages.values.isNotEmpty
         ? _localPackages.values.first.index
         : _emptyIndex;
   }
 
-  /// Clear all external indexes.
-  @Deprecated('Use dispose() instead')
-  void unloadAll() {
-    _sdkIndex = null;
-    _loadedSdkVersion = null;
-    _loadedFlutterVersion = null;
-    _flutterPackages.clear();
-    _hostedPackages.clear();
-    _gitPackages.clear();
-  }
-
-  /// Local indexes by name (for backward compatibility).
+  /// Local indexes by name.
   Map<String, ScipIndex> get localIndexes =>
       _localPackages.map((k, v) => MapEntry(k, v.index));
 
@@ -1173,13 +1164,6 @@ class PackageRegistry {
     return null;
   }
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Backward Compatibility (for QueryExecutor)
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Backward compatibility alias.
-typedef IndexRegistry = PackageRegistry;
 
 /// Scope for cross-index queries.
 enum IndexScope {

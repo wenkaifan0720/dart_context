@@ -82,7 +82,7 @@ class DartContext {
   }
 
   final PackageRegistry _registry;
-  QueryExecutor _executor;
+  final QueryExecutor _executor;
   final RootWatcher? _watcher;
   final DiscoveryResult? _discovery;
 

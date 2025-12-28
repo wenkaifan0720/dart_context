@@ -67,7 +67,7 @@ class QueryExecutor {
   /// Optional registry for cross-package queries.
   /// When provided, hierarchy queries (supertypes, subtypes, hierarchy, members)
   /// will search across loaded external indexes (SDK, packages).
-  final IndexRegistry? registry;
+  final PackageRegistry? registry;
 
   /// Execute a query string and return the result.
   ///

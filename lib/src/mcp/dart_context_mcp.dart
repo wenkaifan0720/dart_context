@@ -6,7 +6,6 @@ import 'package:dart_mcp/server.dart';
 import '../cache/cache_paths.dart';
 import '../dart_context.dart';
 import '../index/external_index_builder.dart';
-import '../index/package_registry.dart';
 import '../utils/pubspec_utils.dart';
 import '../version.dart';
 
@@ -730,7 +729,7 @@ base mixin DartContextSupport on ToolsSupport, RootsTrackingSupport {
 | `source <symbol>` | Full source code | `source handleLogin` |
 | `find <pattern>` | Search symbols | `find Auth*` |
 | `which <symbol>` | Disambiguate matches | `which login` |
-| `grep <pattern>` | Search in source | `grep /TODO\|FIXME/` |
+| `grep <pattern>` | Search in source | `grep /TODO|FIXME/` |
 | `calls <symbol>` | What does it call? | `calls AuthService.login` |
 | `callers <symbol>` | What calls it? | `callers validateUser` |
 | `imports <file>` | File imports | `imports lib/auth.dart` |
@@ -744,7 +743,7 @@ base mixin DartContextSupport on ToolsSupport, RootsTrackingSupport {
 | Pattern | Type | Example |
 |---------|------|---------|
 | `Auth*` | Glob | Wildcard matching |
-| `/TODO\|FIXME/` | Regex | Regular expression |
+| `/TODO|FIXME/` | Regex | Regular expression |
 | `/error/i` | Regex | Case-insensitive |
 | `~authentcate` | Fuzzy | Typo-tolerant |
 | `Class.method` | Qualified | Disambiguate |

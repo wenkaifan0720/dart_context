@@ -309,6 +309,9 @@ class PackageRegistry {
   ///
   /// Creates an [IncrementalScipIndexer] for each package and syncs
   /// indexes to the workspace cache.
+  ///
+  /// Packages that fail to initialize (e.g., missing package_config.json)
+  /// are skipped with a warning rather than failing the entire operation.
   Future<void> initializeLocalPackages(
     List<LocalPackage> packages, {
     bool useCache = true,
@@ -318,29 +321,45 @@ class PackageRegistry {
     final registryDir = CachePaths.workspaceDir(rootPath);
     await Directory(registryDir).create(recursive: true);
 
+    final skipped = <String>[];
+
     for (final pkg in packages) {
       onProgress?.call('Initializing ${pkg.name}...');
 
-      final indexer = await IncrementalScipIndexer.open(
-        pkg.path,
-        watch: false, // RootWatcher handles file watching
-        useCache: useCache,
-      );
+      try {
+        final indexer = await IncrementalScipIndexer.open(
+          pkg.path,
+          watch: false, // RootWatcher handles file watching
+          useCache: useCache,
+        );
 
-      _localPackages[pkg.name] = LocalPackageIndex(
-        name: pkg.name,
-        path: pkg.path,
-        indexer: indexer,
-      );
+        _localPackages[pkg.name] = LocalPackageIndex(
+          name: pkg.name,
+          path: pkg.path,
+          indexer: indexer,
+        );
 
-      // Sync to workspace cache
-      await _syncPackageToCache(pkg.name);
+        // Sync to workspace cache
+        await _syncPackageToCache(pkg.name);
+      } catch (e) {
+        // Skip packages that can't be initialized (missing package_config.json, etc.)
+        skipped.add(pkg.name);
+        onProgress?.call('Skipped ${pkg.name}: $e');
+      }
     }
 
-    // Save metadata
-    await _saveMetadata(packages);
+    // Save metadata for successfully initialized packages
+    await _saveMetadata(
+        packages.where((p) => !skipped.contains(p.name)).toList());
 
-    onProgress?.call('Initialized ${_localPackages.length} packages');
+    if (skipped.isNotEmpty) {
+      onProgress?.call(
+        'Initialized ${_localPackages.length} packages '
+        '(${skipped.length} skipped: run `dart pub get` in skipped packages)',
+      );
+    } else {
+      onProgress?.call('Initialized ${_localPackages.length} packages');
+    }
   }
 
   /// Add a local package index directly.
@@ -721,7 +740,8 @@ class PackageRegistry {
 
     void searchIndex(ScipIndex index, String packageName) {
       for (final sym in index.findSymbols(symbolName)) {
-        if (symbolKind != null && sym.kind != symbolKind) continue;
+        // Compare kind strings (e.g., "class", "function", etc.)
+        if (symbolKind != null && sym.kindString != symbolKind) continue;
         for (final ref in index.findReferences(sym.symbol)) {
           results.add((
             ref: ref,
@@ -952,7 +972,6 @@ class PackageRegistry {
   /// Hosted package indexes (alias for hostedPackages).
   Map<String, ScipIndex> get packageIndexes =>
       _hostedPackages.map((k, v) => MapEntry(k, v.index));
-
 
   // Placeholder empty index for when no packages exist
   static final _emptyIndex = ScipIndex.empty();
@@ -1208,4 +1227,3 @@ class DependencyLoadResult {
     return 'DependencyLoadResult(${parts.join(", ")})';
   }
 }
-

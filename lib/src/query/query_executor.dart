@@ -1227,11 +1227,12 @@ class QueryExecutor {
     final projectResults = <SymbolInfo>[];
     final externalResults = <SymbolInfo>[];
 
-    // Get all local indexes to search (project + local workspace packages)
-    final allLocalIndexes = <ScipIndex>[index];
-    if (registry != null) {
-      allLocalIndexes.addAll(registry!.localIndexes.values);
-    }
+    // Get all local indexes to search
+    // When registry is available, use its local indexes (which already includes
+    // the project index). Otherwise, just use the standalone index.
+    final allLocalIndexes = registry != null
+        ? registry!.localIndexes.values.toList()
+        : <ScipIndex>[index];
 
     try {
       // Use appropriate search method based on pattern type
@@ -1250,15 +1251,10 @@ class QueryExecutor {
             return regex.hasMatch(sym.name) || regex.hasMatch(sym.symbol);
           }));
         }
-        // Also search in external registry (SDK, pub packages)
+        // Also search in all external packages (SDK, hosted, Flutter, git)
         if (registry != null) {
-          for (final pkgIndex in registry!.packageIndexes.values) {
-            externalResults.addAll(pkgIndex.allSymbols.where((sym) {
-              return regex.hasMatch(sym.name) || regex.hasMatch(sym.symbol);
-            }));
-          }
-          if (registry!.sdkIndex != null) {
-            externalResults.addAll(registry!.sdkIndex!.allSymbols.where((sym) {
+          for (final idx in registry!.allExternalIndexes) {
+            externalResults.addAll(idx.allSymbols.where((sym) {
               return regex.hasMatch(sym.name) || regex.hasMatch(sym.symbol);
             }));
           }
@@ -1268,9 +1264,11 @@ class QueryExecutor {
         for (final idx in allLocalIndexes) {
           projectResults.addAll(idx.findSymbols(query.target));
         }
-        // Also search in registry
+        // Also search in external packages only (local already searched above)
         if (registry != null) {
-          externalResults.addAll(registry!.findSymbols(query.target));
+          for (final idx in registry!.allExternalIndexes) {
+            externalResults.addAll(idx.findSymbols(query.target));
+          }
         }
       } else {
         // Literal - exact match on name
@@ -1281,15 +1279,10 @@ class QueryExecutor {
             return regex.hasMatch(sym.name);
           }));
         }
-        // Also search in registry
+        // Also search in all external packages (SDK, hosted, Flutter, git)
         if (registry != null) {
-          for (final pkgIndex in registry!.packageIndexes.values) {
-            externalResults.addAll(pkgIndex.allSymbols.where((sym) {
-              return regex.hasMatch(sym.name);
-            }));
-          }
-          if (registry!.sdkIndex != null) {
-            externalResults.addAll(registry!.sdkIndex!.allSymbols.where((sym) {
+          for (final idx in registry!.allExternalIndexes) {
+            externalResults.addAll(idx.allSymbols.where((sym) {
               return regex.hasMatch(sym.name);
             }));
           }

@@ -52,7 +52,7 @@ void main() {
         ),
       );
 
-      registry = IndexRegistry(projectIndex: projectIndex);
+      registry = IndexRegistry.withIndexes(projectIndex: projectIndex);
     });
 
     group('basic operations', () {
@@ -76,7 +76,8 @@ void main() {
         final stats = registry.stats;
         expect(stats['sdkLoaded'], false);
         expect(stats['hostedPackagesLoaded'], 0);
-        expect(stats['project'], isNotNull);
+        // Stats no longer has 'project' key, instead tracks packages
+        expect(stats['packages'], isA<int>());
       });
     });
 

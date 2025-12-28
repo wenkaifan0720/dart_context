@@ -27,7 +27,5 @@ bool isVersionCompatible(String? cachedVersion) {
   }
 
   // Major and minor must match
-  return currentParts[0] == cachedParts[0] &&
-      currentParts[1] == cachedParts[1];
+  return currentParts[0] == cachedParts[0] && currentParts[1] == cachedParts[1];
 }
-

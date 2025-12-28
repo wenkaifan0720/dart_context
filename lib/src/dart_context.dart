@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'index/incremental_indexer.dart';
 import 'index/package_registry.dart';
+import 'index/scip_index.dart';
 import 'package_discovery.dart';
 import 'query/query_executor.dart';
 import 'query/query_parser.dart';
@@ -65,6 +66,20 @@ class DartContext {
 
   /// The root path for this context.
   final String rootPath;
+
+  /// Alias for [rootPath] for backward compatibility.
+  @Deprecated('Use rootPath instead')
+  String get projectRoot => rootPath;
+
+  /// Primary index for direct programmatic queries.
+  ///
+  /// Returns the first local package's index, or an empty index if none.
+  /// For multi-package workspaces, consider using [registry] directly.
+  ScipIndex get index {
+    final packages = _registry.localPackages.values.toList();
+    if (packages.isEmpty) return ScipIndex.empty(projectRoot: rootPath);
+    return packages.first.indexer.index;
+  }
 
   final PackageRegistry _registry;
   QueryExecutor _executor;

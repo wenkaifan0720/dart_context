@@ -2,20 +2,18 @@ import 'dart:io';
 
 import 'package:dart_context/src/index/external_index_builder.dart';
 import 'package:dart_context/src/index/package_registry.dart';
-import 'package:dart_context/src/index/scip_index.dart';
 import 'package:test/test.dart';
 
 void main() {
   group('ExternalIndexBuilder', () {
     late Directory tempDir;
-    late IndexRegistry registry;
+    late PackageRegistry registry;
     late ExternalIndexBuilder builder;
 
     setUp(() async {
       tempDir = await Directory.systemTemp.createTemp('mcp_tools_test_');
-      final tempIndex = ScipIndex.empty(projectRoot: tempDir.path);
-      registry = IndexRegistry(
-        projectIndex: tempIndex,
+      registry = PackageRegistry(
+        rootPath: tempDir.path,
         globalCachePath: '${tempDir.path}/.dart_context',
       );
       builder = ExternalIndexBuilder(registry: registry);

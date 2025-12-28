@@ -86,8 +86,7 @@ export 'src/package_discovery.dart'
         shouldIgnorePath,
         ignoredSegments;
 export 'src/query/query_executor.dart' show QueryExecutor;
-export 'src/query/query_parser.dart'
-    show ScipQuery, ParsedPattern, PatternType;
+export 'src/query/query_parser.dart' show ScipQuery, ParsedPattern, PatternType;
 export 'src/query/query_result.dart';
 export 'src/root_watcher.dart' show RootWatcher;
 export 'src/utils/package_config.dart'

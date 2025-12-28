@@ -123,6 +123,87 @@ class PackageRegistry {
     String? globalCachePath,
   }) : _globalCachePath = globalCachePath ?? CachePaths.globalCacheDir;
 
+  /// Backward compatibility constructor.
+  ///
+  /// Creates a registry from a pre-existing project index.
+  /// Used by tests that create indexes manually.
+  @Deprecated('Use PackageRegistry() and addLocalPackage() instead')
+  factory PackageRegistry.fromProjectIndex(ScipIndex projectIndex) {
+    final registry = PackageRegistry(
+      rootPath: projectIndex.projectRoot,
+    );
+    // Add as a synthetic local package
+    registry._syntheticProjectIndex = projectIndex;
+    return registry;
+  }
+
+  /// Backward compatibility constructor for tests.
+  ///
+  /// Creates a registry with pre-populated indexes.
+  @Deprecated('Use PackageRegistry() and load methods instead')
+  factory PackageRegistry.withIndexes({
+    required ScipIndex projectIndex,
+    ScipIndex? sdkIndex,
+    String? sdkVersion,
+    Map<String, ScipIndex>? packageIndexes,
+    Map<String, ScipIndex>? flutterIndexes,
+    Map<String, ScipIndex>? gitIndexes,
+  }) {
+    final registry = PackageRegistry(
+      rootPath: projectIndex.projectRoot,
+    );
+    registry._syntheticProjectIndex = projectIndex;
+
+    if (sdkIndex != null) {
+      registry._sdkIndex = ExternalPackageIndex(
+        name: 'dart',
+        version: sdkVersion ?? 'unknown',
+        type: ExternalPackageType.sdk,
+        cachePath: '',
+        index: sdkIndex,
+      );
+      registry._loadedSdkVersion = sdkVersion;
+    }
+
+    packageIndexes?.forEach((key, idx) {
+      final parts = key.split('-');
+      final name = parts.length > 1 ? parts.first : key;
+      final version = parts.length > 1 ? parts.skip(1).join('-') : 'unknown';
+      registry._hostedPackages[key] = ExternalPackageIndex(
+        name: name,
+        version: version,
+        type: ExternalPackageType.hosted,
+        cachePath: '',
+        index: idx,
+      );
+    });
+
+    flutterIndexes?.forEach((key, idx) {
+      registry._flutterPackages[key] = ExternalPackageIndex(
+        name: key,
+        version: '',
+        type: ExternalPackageType.flutter,
+        cachePath: '',
+        index: idx,
+      );
+    });
+
+    gitIndexes?.forEach((key, idx) {
+      registry._gitPackages[key] = ExternalPackageIndex(
+        name: key,
+        version: '',
+        type: ExternalPackageType.git,
+        cachePath: '',
+        index: idx,
+      );
+    });
+
+    return registry;
+  }
+
+  /// Synthetic project index for backward compat.
+  ScipIndex? _syntheticProjectIndex;
+
   /// The root path for this workspace/project.
   final String rootPath;
 
@@ -161,8 +242,14 @@ class PackageRegistry {
       Map.unmodifiable(_localPackages);
 
   /// All local package indexes.
-  Iterable<ScipIndex> get allLocalIndexes =>
-      _localPackages.values.map((p) => p.index);
+  Iterable<ScipIndex> get allLocalIndexes sync* {
+    if (_syntheticProjectIndex != null) {
+      yield _syntheticProjectIndex!;
+    }
+    for (final pkg in _localPackages.values) {
+      yield pkg.index;
+    }
+  }
 
   // ─────────────────────────────────────────────────────────────────────────
   // External packages (immutable, cached)
@@ -581,6 +668,31 @@ class PackageRegistry {
     return null;
   }
 
+  /// Resolve the absolute file path for a symbol.
+  ///
+  /// Finds the owning index and combines its root with the relative path.
+  String? resolveFilePath(String symbolId) {
+    final owningIndex = findOwningIndex(symbolId);
+    if (owningIndex == null) return null;
+
+    // Try to find the definition occurrence
+    final def = owningIndex.findDefinition(symbolId);
+    if (def != null) {
+      return '${owningIndex.sourceRoot}/${def.file}';
+    }
+
+    // Fallback: parse file path from symbol ID
+    // Format: "pkg path/to/file.dart/Symbol#"
+    final filePathMatch =
+        RegExp(r'^[^\s]+\s+([^\s]+\.dart)/').firstMatch(symbolId);
+    if (filePathMatch != null) {
+      final relativePath = filePathMatch.group(1);
+      return '${owningIndex.sourceRoot}/$relativePath';
+    }
+
+    return null;
+  }
+
   /// Find definition across all indexes.
   OccurrenceInfo? findDefinition(String symbolId) {
     for (final index in allIndexes) {
@@ -643,7 +755,10 @@ class PackageRegistry {
   }
 
   /// Find symbols by pattern across all indexes.
-  List<SymbolInfo> findSymbols(String pattern) {
+  List<SymbolInfo> findSymbols(
+    String pattern, {
+    IndexScope scope = IndexScope.projectAndLoaded,
+  }) {
     final seen = <String>{};
     final results = <SymbolInfo>[];
 
@@ -653,8 +768,16 @@ class PackageRegistry {
       }
     }
 
-    for (final index in allIndexes) {
+    // Always search local/project indexes
+    for (final index in allLocalIndexes) {
       addUnique(index.findSymbols(pattern));
+    }
+
+    // Search external indexes if not limited to project
+    if (scope == IndexScope.projectAndLoaded) {
+      for (final index in allExternalIndexes) {
+        addUnique(index.findSymbols(pattern));
+      }
     }
 
     return results;
@@ -804,8 +927,23 @@ class PackageRegistry {
   // ─────────────────────────────────────────────────────────────────────────
 
   /// The first local index (used as "project index" for compatibility).
-  ScipIndex get projectIndex =>
-      _localPackages.values.isNotEmpty ? _localPackages.values.first.index : _emptyIndex;
+  ScipIndex get projectIndex {
+    if (_syntheticProjectIndex != null) return _syntheticProjectIndex!;
+    return _localPackages.values.isNotEmpty
+        ? _localPackages.values.first.index
+        : _emptyIndex;
+  }
+
+  /// Clear all external indexes.
+  @Deprecated('Use dispose() instead')
+  void unloadAll() {
+    _sdkIndex = null;
+    _loadedSdkVersion = null;
+    _loadedFlutterVersion = null;
+    _flutterPackages.clear();
+    _hostedPackages.clear();
+    _gitPackages.clear();
+  }
 
   /// Local indexes by name (for backward compatibility).
   Map<String, ScipIndex> get localIndexes =>
@@ -847,6 +985,7 @@ class PackageRegistry {
       'flutterVersion': _loadedFlutterVersion,
       'flutterPackagesLoaded': _flutterPackages.length,
       'hostedPackagesLoaded': _hostedPackages.length,
+      'hostedPackageNames': _hostedPackages.keys.toList(),
       'gitPackagesLoaded': _gitPackages.length,
     };
   }

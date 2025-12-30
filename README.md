@@ -223,7 +223,8 @@ find *Service | calls      # What do all services call?
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                           dart_context                                  │
+│                           DartContext                                   │
+│  Entry point: open(), query(), dispose()                                │
 ├─────────────────────────────────────────────────────────────────────────┤
 │                                                                         │
 │  ┌──────────────┐     ┌──────────────┐     ┌──────────────────────────┐│
@@ -234,15 +235,17 @@ find *Service | calls      # What do all services call?
 │                                                         │              │
 │                                                         ▼              │
 │  ┌──────────────────────────────────────────────────────────────────┐  │
-│  │                        ScipIndex                                 │  │
-│  │  O(1) lookups: symbol → info, symbol → references, file → doc    │  │
+│  │                     PackageRegistry                              │  │
+│  │  Local packages (mutable) + External packages (cached)          │  │
+│  │  Cross-package symbol search, dependency resolution             │  │
 │  └──────────────────────────────────────────────────────────────────┘  │
-│                                  ▲                                     │
 │                                  │                                     │
-│  ┌───────────────────────────────┴──────────────────────────────────┐  │
-│  │                  IncrementalScipIndexer                          │  │
-│  │  File watching + hash tracking + Dart analyzer + SCIP generation │  │
-│  └──────────────────────────────────────────────────────────────────┘  │
+│              ┌───────────────────┼───────────────────┐                 │
+│              ▼                   ▼                   ▼                 │
+│  ┌───────────────────┐  ┌───────────────┐  ┌────────────────────────┐ │
+│  │ LocalPackageIndex │  │ ScipIndex     │  │ ExternalPackageIndex   │ │
+│  │ + Indexer (live)  │  │ O(1) lookups  │  │ SDK/Flutter/pub (cached)│ │
+│  └───────────────────┘  └───────────────┘  └────────────────────────┘ │
 │                                                                         │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
@@ -312,54 +315,54 @@ This enables queries like:
 
 **Note**: Pre-indexing is optional and takes time. By default, dart_context only indexes your project code.
 
-### Mono Repo / Workspace Support
+### Mono Repo Support
 
-dart_context automatically detects and supports mono repo workspaces:
+dart_context automatically discovers and indexes all packages in any directory structure:
 
-- **Melos workspaces** (projects with `melos.yaml`)
+- **Melos monorepos** (projects with `melos.yaml`)
 - **Dart 3.0+ pub workspaces** (pubspec.yaml with `workspace:` field)
+- **Any folder** with multiple `pubspec.yaml` files
 
 ```bash
-# Show workspace information
-dart_context workspace info
-
-# Index all packages in the workspace
-dart_context workspace index
-
-# Sync package indexes to workspace registry
-dart_context workspace sync
+# List all discovered packages in a directory
+dart_context list-packages /path/to/monorepo
 ```
 
-For mono repos, indexes are stored in two locations:
+For mono repos, indexes are stored per-package:
 
 ```
 /path/to/monorepo/
-├── .dart_context/                    # Workspace registry
-│   ├── workspace.json                # Workspace metadata
-│   └── local/                        # Local package indexes
-│       ├── hologram_core/index.scip
-│       └── hologram_shared/index.scip
 └── packages/
-    └── hologram_core/
-        └── .dart_context/            # Per-package working index
-            └── index.scip
+    ├── my_core/
+    │   └── .dart_context/           # Per-package index
+    │       ├── index.scip
+    │       └── manifest.json
+    └── my_app/
+        └── .dart_context/
+            ├── index.scip
+            └── manifest.json
 ```
 
-When opening a project that's part of a workspace:
-- Cross-package queries work automatically between workspace packages
-- A single file watcher at the workspace root handles all packages
-- Changes to one package update both its index and the workspace registry
+When opening a directory with multiple packages:
+- All packages are discovered recursively
+- Cross-package queries work automatically
+- A single file watcher at the root handles all packages
+- Each package maintains its own incremental cache
 
 ```dart
-// Opening a workspace package
-final context = await DartContext.open('/path/to/monorepo/packages/my_app');
+// Opening a mono repo
+final context = await DartContext.open('/path/to/monorepo');
 
-// Workspace info is available
-print(context.workspace?.type); // melos, pubWorkspace, or single
-print(context.workspace?.packages.length);
+// All packages are discovered
+print(context.packages.length);     // e.g., 5 packages
+print(context.packageCount);        // Same as above
 
 // Cross-package queries work seamlessly
 final result = await context.query('refs SharedUtils'); // Finds refs in other packages
+
+// Find which package owns a file
+final pkg = context.findPackageForPath('/path/to/monorepo/packages/my_app/lib/main.dart');
+print(pkg?.name); // my_app
 ```
 
 ## Performance

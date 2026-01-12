@@ -630,7 +630,7 @@ code_context docs view auth
 code_context docs list
 ```
 
-## Design Decisions & Open Questions
+## Design Decisions
 
 ### 1. Generation Order (Topological Sort)
 
@@ -641,150 +641,105 @@ code_context docs list
 - If cycles exist (A ↔ B), generate together in same batch with mutual context
 - Topological sort determines order; parallel generation for independent folders
 
-### 2. Folder vs File Granularity
+### 2. Folder-Level Only
 
-**Problem**: Some files are standalone (utils, models). Should they get their own docs?
+Docs are generated at folder level only. File-level documentation stays in source files as `///` comments, maintained by developers or AI coding assistants.
 
-**Decision**:
-- Default: Folder-level docs (aggregates files)
-- Option: `--file-level` for large folders or standalone files
-- Heuristic: If folder has 1-2 files, treat as single unit
-- File-level `///` comments are the source of truth for individual symbols
+**Rationale**:
+- Keeps docs close to code for file-level details
+- Folder docs provide the "big picture" that's missing from source
+- Simpler system with clear separation of concerns
 
-### 3. Human Edits Preservation
+### 3. Fully AI-Generated (No Human Edits)
 
-**Problem**: Users may edit generated docs. How to preserve on regeneration?
+Docs in `.dart_context/docs/` are fully AI-generated and can be regenerated at any time.
 
-**Decision**:
-- Use markers to separate generated vs human sections:
-  ```markdown
-  <!-- BEGIN GENERATED -->
-  (LLM content here)
-  <!-- END GENERATED -->
-  
-  ## Design Decisions  <!-- Human-maintained -->
-  ...
-  ```
-- Only regenerate content within markers
-- Human sections preserved and passed as context to LLM
+**Rationale**:
+- Stored in `.dart_context/` (not `docs/`) signals "auto-generated"
+- No merge conflicts or preservation logic needed
+- Users who want custom docs can maintain them separately in `docs/`
+- Simpler implementation
 
-### 4. Doc-to-Doc vs Doc-to-Code Links
+### 4. External Package Docs
 
-**Problem**: Smart symbols link to code. Should they also link to docs?
+For now, use existing documentation from pub.dev / package READMEs.
 
-**Decision**:
-- Primary: Link to code (`scip://...`)
-- Secondary: If target has a doc, show "See also: [Auth Module](./auth.md)"
-- Viewer can resolve `scip://` to either code or doc based on context
+**Future**: May generate docs for poorly-documented packages using SCIP index.
 
-### 5. External Package Docs - Use Existing?
+### 5. Agentic Generation
 
-**Problem**: Many packages have good docs on pub.dev. Generate our own or use existing?
+Instead of a fixed pipeline, use an **agent-based approach**:
 
-**Decision**:
-- **Tier 1** (Flutter SDK, major packages): Use existing pub.dev docs as source
-- **Tier 2** (well-documented packages): Extract from package's README + API docs
-- **Tier 3** (poorly documented): Generate from SCIP index
-- Cache all as structured docs for consistent querying
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    Doc Generation Agent                          │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  Agent receives:                                                 │
+│    - Target folder path                                          │
+│    - Initial context (SCIP symbols, file list)                   │
+│                                                                  │
+│  Agent has tools:                                                │
+│    - read_file(path) - Read any file in the project             │
+│    - query_scip(query) - Query the SCIP index                   │
+│    - read_doc(path) - Read already-generated folder docs        │
+│    - read_pubspec() - Get project metadata                      │
+│    - list_files(folder) - Explore folder structure              │
+│                                                                  │
+│  Agent decides:                                                  │
+│    - What files to read in detail                                │
+│    - What dependencies to explore                                │
+│    - What SCIP queries to make                                   │
+│    - When it has enough context to generate                      │
+│                                                                  │
+│  Agent outputs:                                                  │
+│    - Markdown doc with smart symbols                             │
+│    - List of dependencies (for manifest)                         │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
 
-### 6. Quality Signals
+**Benefits**:
+- Agent explores non-Dart files (YAML, JSON) as needed
+- Handles large folders by selectively reading important files
+- More flexible than fixed context building
+- Can ask clarifying questions or make multiple passes
 
-**Problem**: How do we know if generated docs are good?
+### 6. Model Selection by Scope
 
-**Decision**:
-- **Completeness score**: % of public symbols with smart links
-- **Staleness indicator**: Days since last regeneration vs code changes
-- **Missing doc comments**: Flag symbols without `///` in source
-- **Broken links**: Validate smart symbols resolve to existing code
+Different models for different doc levels:
 
-### 7. Large Folder Handling
+| Scope | Model | Rationale |
+|-------|-------|-----------|
+| Folder docs | Cheaper (e.g., GPT-4o-mini, Claude Haiku) | Many folders, simpler context |
+| Module docs | Mid-tier (e.g., GPT-4o, Claude Sonnet) | Synthesis from folder docs |
+| Project docs | Premium (e.g., GPT-4, Claude Opus) | High-level, most visible |
 
-**Problem**: Some folders have 50+ files. Context would be huge.
+Configurable via CLI: `--folder-model gpt-4o-mini --project-model gpt-4o`
 
-**Decision**:
-- **Chunking**: Split into sub-docs by subdirectory or logical grouping
-- **Summarization**: For very large folders, first pass summarizes each file, second pass synthesizes
-- **Priority**: Focus on public API, skip implementation details
-- **Token budget**: Set max tokens per folder, prioritize by symbol usage frequency
+### 7. Circular Dependencies
 
-### 8. Circular Dependencies
-
-**Problem**: Folder A depends on B, B depends on A.
-
-**Decision**:
 - Detect cycles during topological sort
-- For cycles: Generate both in same batch with mutual context
-- Alternative: Generate A first with B's signatures only, then B, then regenerate A
+- For cycles: Generate both folders in same agent session with mutual context
+- Agent can query both folders' SCIP data before generating either doc
 
-### 9. Non-Dart Files
+### 8. Primary Use Case: Agent Consumption
 
-**Problem**: Projects have YAML, JSON, README, assets. Include them?
+These docs are primarily for **AI agents** to quickly understand the codebase:
 
-**Decision**:
-- `pubspec.yaml`: Always include (project metadata)
-- `README.md`: Include as existing content to preserve
-- `*.json` config: Include if referenced by Dart code
-- Assets: Mention existence but don't include content
+- Agent receives user question about the code
+- Agent queries doc index to find relevant folder/module docs
+- Agent reads docs (faster than reading all source files)
+- Agent can follow smart symbols to dive into code if needed
 
-### 10. Cost Control
+Secondary use case: Developer onboarding and reference.
 
-**Problem**: LLM calls are expensive. How to control costs?
+## Deferred (Future Consideration)
 
-**Decision**:
-- **Dry-run mode**: `--dry-run` shows what would be generated, estimates tokens
-- **Incremental default**: Only regenerate dirty docs
-- **Batch optimization**: Group small folders into single LLM call
-- **Model selection**: Allow `--model gpt-4o-mini` for cheaper passes
-- **Caching**: Aggressive caching of external package docs
-
-### 11. CI/CD Integration
-
-**Problem**: Should docs be generated in CI?
-
-**Decision**:
-- **PR preview**: Generate docs for changed folders only
-- **Main branch**: Full doc generation on merge
-- **Staleness check**: CI fails if docs are stale (optional)
-- **Output**: Can output to `docs/` or as CI artifact
-
-### 12. Search & Discovery
-
-**Problem**: How do users find relevant docs?
-
-**Decision**:
-- **Symbol lookup**: `code_context docs find AuthService` → shows doc containing it
-- **Full-text search**: `code_context docs search "authentication"` 
-- **Reverse lookup**: `code_context docs for lib/auth/service.dart` → doc covering that file
-- **Index file**: Generated `docs/index.json` with all doc metadata for tooling
-
-### 13. Prompt Customization
-
-**Problem**: Different teams want different doc styles.
-
-**Decision**:
-- **Config file**: `.dart_context/doc_config.yaml`
-  ```yaml
-  style: concise  # or: detailed, tutorial
-  sections:
-    - overview
-    - components
-    - how_it_works
-    - dependencies
-  custom_instructions: |
-    Focus on state management patterns.
-    Include mermaid diagrams for complex flows.
-  ```
-- **Per-folder overrides**: `.dart_context/doc_config.yaml` in subfolder
-
-### 14. Validation & Testing
-
-**Problem**: How do we verify docs are accurate?
-
-**Decision**:
-- **Link validation**: All smart symbols must resolve
-- **Symbol coverage**: Warn if public symbols aren't mentioned
-- **Diff review**: On regeneration, show diff for human review
-- **Smoke test**: Parse generated markdown, check structure
+- Quality signals and validation
+- CI/CD integration  
+- Prompt customization / config files
+- Human edit preservation (if needed)
 
 ## Known Limitations
 
@@ -792,7 +747,6 @@ code_context docs list
 2. **Complex generics**: May not fully explain generic type relationships
 3. **Dynamic code**: Reflection, code generation not well documented
 4. **Cross-repo**: Currently single-repo focused (monorepo OK)
-5. **Non-English**: Prompts are English; multilingual docs need translation layer
 
 ## Implementation Status
 

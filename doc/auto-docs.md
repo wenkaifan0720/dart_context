@@ -630,6 +630,170 @@ code_context docs view auth
 code_context docs list
 ```
 
+## Design Decisions & Open Questions
+
+### 1. Generation Order (Topological Sort)
+
+**Problem**: Bottom-up requires generating dependencies first. What if there are cycles?
+
+**Decision**: 
+- Use SCIP call graph to build dependency DAG at folder level
+- If cycles exist (A ↔ B), generate together in same batch with mutual context
+- Topological sort determines order; parallel generation for independent folders
+
+### 2. Folder vs File Granularity
+
+**Problem**: Some files are standalone (utils, models). Should they get their own docs?
+
+**Decision**:
+- Default: Folder-level docs (aggregates files)
+- Option: `--file-level` for large folders or standalone files
+- Heuristic: If folder has 1-2 files, treat as single unit
+- File-level `///` comments are the source of truth for individual symbols
+
+### 3. Human Edits Preservation
+
+**Problem**: Users may edit generated docs. How to preserve on regeneration?
+
+**Decision**:
+- Use markers to separate generated vs human sections:
+  ```markdown
+  <!-- BEGIN GENERATED -->
+  (LLM content here)
+  <!-- END GENERATED -->
+  
+  ## Design Decisions  <!-- Human-maintained -->
+  ...
+  ```
+- Only regenerate content within markers
+- Human sections preserved and passed as context to LLM
+
+### 4. Doc-to-Doc vs Doc-to-Code Links
+
+**Problem**: Smart symbols link to code. Should they also link to docs?
+
+**Decision**:
+- Primary: Link to code (`scip://...`)
+- Secondary: If target has a doc, show "See also: [Auth Module](./auth.md)"
+- Viewer can resolve `scip://` to either code or doc based on context
+
+### 5. External Package Docs - Use Existing?
+
+**Problem**: Many packages have good docs on pub.dev. Generate our own or use existing?
+
+**Decision**:
+- **Tier 1** (Flutter SDK, major packages): Use existing pub.dev docs as source
+- **Tier 2** (well-documented packages): Extract from package's README + API docs
+- **Tier 3** (poorly documented): Generate from SCIP index
+- Cache all as structured docs for consistent querying
+
+### 6. Quality Signals
+
+**Problem**: How do we know if generated docs are good?
+
+**Decision**:
+- **Completeness score**: % of public symbols with smart links
+- **Staleness indicator**: Days since last regeneration vs code changes
+- **Missing doc comments**: Flag symbols without `///` in source
+- **Broken links**: Validate smart symbols resolve to existing code
+
+### 7. Large Folder Handling
+
+**Problem**: Some folders have 50+ files. Context would be huge.
+
+**Decision**:
+- **Chunking**: Split into sub-docs by subdirectory or logical grouping
+- **Summarization**: For very large folders, first pass summarizes each file, second pass synthesizes
+- **Priority**: Focus on public API, skip implementation details
+- **Token budget**: Set max tokens per folder, prioritize by symbol usage frequency
+
+### 8. Circular Dependencies
+
+**Problem**: Folder A depends on B, B depends on A.
+
+**Decision**:
+- Detect cycles during topological sort
+- For cycles: Generate both in same batch with mutual context
+- Alternative: Generate A first with B's signatures only, then B, then regenerate A
+
+### 9. Non-Dart Files
+
+**Problem**: Projects have YAML, JSON, README, assets. Include them?
+
+**Decision**:
+- `pubspec.yaml`: Always include (project metadata)
+- `README.md`: Include as existing content to preserve
+- `*.json` config: Include if referenced by Dart code
+- Assets: Mention existence but don't include content
+
+### 10. Cost Control
+
+**Problem**: LLM calls are expensive. How to control costs?
+
+**Decision**:
+- **Dry-run mode**: `--dry-run` shows what would be generated, estimates tokens
+- **Incremental default**: Only regenerate dirty docs
+- **Batch optimization**: Group small folders into single LLM call
+- **Model selection**: Allow `--model gpt-4o-mini` for cheaper passes
+- **Caching**: Aggressive caching of external package docs
+
+### 11. CI/CD Integration
+
+**Problem**: Should docs be generated in CI?
+
+**Decision**:
+- **PR preview**: Generate docs for changed folders only
+- **Main branch**: Full doc generation on merge
+- **Staleness check**: CI fails if docs are stale (optional)
+- **Output**: Can output to `docs/` or as CI artifact
+
+### 12. Search & Discovery
+
+**Problem**: How do users find relevant docs?
+
+**Decision**:
+- **Symbol lookup**: `code_context docs find AuthService` → shows doc containing it
+- **Full-text search**: `code_context docs search "authentication"` 
+- **Reverse lookup**: `code_context docs for lib/auth/service.dart` → doc covering that file
+- **Index file**: Generated `docs/index.json` with all doc metadata for tooling
+
+### 13. Prompt Customization
+
+**Problem**: Different teams want different doc styles.
+
+**Decision**:
+- **Config file**: `.dart_context/doc_config.yaml`
+  ```yaml
+  style: concise  # or: detailed, tutorial
+  sections:
+    - overview
+    - components
+    - how_it_works
+    - dependencies
+  custom_instructions: |
+    Focus on state management patterns.
+    Include mermaid diagrams for complex flows.
+  ```
+- **Per-folder overrides**: `.dart_context/doc_config.yaml` in subfolder
+
+### 14. Validation & Testing
+
+**Problem**: How do we verify docs are accurate?
+
+**Decision**:
+- **Link validation**: All smart symbols must resolve
+- **Symbol coverage**: Warn if public symbols aren't mentioned
+- **Diff review**: On regeneration, show diff for human review
+- **Smoke test**: Parse generated markdown, check structure
+
+## Known Limitations
+
+1. **No runtime information**: Docs are static analysis only
+2. **Complex generics**: May not fully explain generic type relationships
+3. **Dynamic code**: Reflection, code generation not well documented
+4. **Cross-repo**: Currently single-repo focused (monorepo OK)
+5. **Non-English**: Prompts are English; multilingual docs need translation layer
+
 ## Implementation Status
 
 - [ ] Doc context builder (extract relevant code for LLM)
@@ -638,7 +802,11 @@ code_context docs list
 - [ ] Dependency manifest and tracking
 - [ ] Dirty detection and incremental regeneration
 - [ ] External package doc generation
+- [ ] Human edit preservation (markers)
+- [ ] Quality signals and validation
+- [ ] Cost estimation and dry-run mode
 - [ ] CLI commands
+- [ ] Config file support
 
 ## Related
 

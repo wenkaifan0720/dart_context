@@ -83,7 +83,8 @@ code_context --no-cache stats
 
 - [Query DSL Reference](query-dsl.md) - Full command reference
 - [Architecture](architecture.md) - How it works
-- [Auto-Generated Docs](auto-docs.md) - Generate architecture and navigation docs
+- [LLM Documentation](auto-docs.md) - LLM-generated docs with smart symbols
+- [Flutter Navigation](flutter-navigation.md) - Navigation flow detection
 - [MCP Integration](mcp-integration.md) - Using with Cursor/AI agents
 - [Monorepo Support](monorepo.md) - Multi-package workspaces
 

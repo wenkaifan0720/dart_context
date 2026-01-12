@@ -1,300 +1,287 @@
-# Auto-Generated Documentation
+# LLM-Generated Documentation
 
 ## Overview
 
-code_context can automatically generate structured documentation for Dart/Flutter projects. The docs are derived from SCIP index data, extracting architecture patterns, navigation flows, and symbol classifications.
+code_context enables automatic generation of human-readable documentation using LLMs, with SCIP-based dependency tracking for efficient incremental updates. This is similar to tools like DeepWiki or Code Wiki, but leverages our existing SCIP infrastructure for smarter change detection.
+
+## Design Goals
+
+1. **LLM-synthesized prose** - Not just symbol listings, but actual documentation
+2. **Smart symbols** - References that link to code and other doc sections
+3. **Bottom-up generation** - Folder → module → project hierarchy
+4. **Incremental updates** - Only regenerate docs whose dependencies changed
+5. **External package docs** - Generate and cache docs for all dependencies
+
+## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                     Auto-Doc Generation                         │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│  ┌──────────────┐     ┌──────────────┐     ┌─────────────────┐ │
-│  │  SCIP Index  │────▶│  Classifiers │────▶│  Markdown/JSON  │ │
-│  │  + Analyzer  │     │              │     │  Documentation  │ │
-│  └──────────────┘     └──────────────┘     └─────────────────┘ │
-│                              │                                  │
-│              ┌───────────────┼───────────────┐                  │
-│              ▼               ▼               ▼                  │
-│     ┌─────────────┐  ┌─────────────┐  ┌──────────────┐         │
-│     │   Layer     │  │   Feature   │  │  Navigation  │         │
-│     │ Classifier  │  │  Detector   │  │   Detector   │         │
-│     └─────────────┘  └─────────────┘  └──────────────┘         │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│                    LLM Documentation Pipeline                        │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  ┌──────────────┐     ┌──────────────┐     ┌───────────────────┐   │
+│  │  SCIP Index  │────▶│  Doc Context │────▶│  LLM Synthesis    │   │
+│  │  + Analyzer  │     │  Builder     │     │                   │   │
+│  └──────────────┘     └──────────────┘     └─────────┬─────────┘   │
+│                                                       │             │
+│                                                       ▼             │
+│  ┌──────────────┐     ┌──────────────┐     ┌───────────────────┐   │
+│  │  Dependency  │◀────│  Smart Token │◀────│  Generated Doc    │   │
+│  │  Tracker     │     │  Linker      │     │  with References  │   │
+│  └──────────────┘     └──────────────┘     └───────────────────┘   │
+│                                                                      │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
-## Quick Start
+## Bottom-Up Generation
 
-### CLI Usage
-
-```bash
-# Generate all documentation views
-code_context generate-docs -p /path/to/flutter/project
-
-# Generate specific view
-code_context generate-docs -p /path/to/project --mode layer
-code_context generate-docs -p /path/to/project --mode feature
-code_context generate-docs -p /path/to/project --mode module
-
-# Specify output format
-code_context generate-docs -p /path/to/project --format json
-code_context generate-docs -p /path/to/project --format text
-```
-
-### Output Structure
-
-Generated docs are stored in the project's `docs/` folder:
+Documentation is generated hierarchically:
 
 ```
-your_project/
-└── docs/
-    ├── index.md              # Overview with links to all docs
-    ├── architecture-layer.md # By architectural layer (UI→Service→Data)
-    ├── architecture-feature.md # By feature (auth, products, etc.)
-    ├── architecture-module.md  # By package/module
-    ├── navigation.json       # Navigation graph (JSON format)
-    └── navigation.md         # Navigation graph (text format)
+Project Root
+├── docs/
+│   ├── index.md                    # Synthesized from module docs
+│   ├── modules/
+│   │   ├── auth.md                 # Synthesized from folder docs
+│   │   └── products.md
+│   └── folders/
+│       ├── lib/features/auth/      # Generated from code + comments
+│       └── lib/features/products/
 ```
 
-## Documentation Views
+### Generation Flow
 
-### 1. Layer View (`--mode layer`)
+1. **Folder-level** (lowest): LLM reads source files, doc comments, and generates prose
+2. **Module-level**: LLM reads folder-level docs, synthesizes higher-level overview
+3. **Project-level**: LLM reads module-level docs, creates project overview
 
-Organizes symbols by architectural layer:
+File-level documentation stays in the source files as doc comments (`///`), maintained by developers or AI coding assistants.
 
-- **UI** - Widgets, pages, screens
-- **Service** - Business logic, use cases
-- **Data** - Repositories, data sources
-- **Model** - Domain models, entities
-- **Utility** - Helpers, extensions, utils
+## Smart Symbols
 
-Layer classification uses multiple signals:
-- SCIP type hierarchy (extends Widget, implements Repository, etc.)
-- SCIP call graph analysis (UI calls Service, Service calls Data)
-- Naming conventions (*Widget, *Service, *Repository)
-- File path patterns (lib/ui/, lib/services/, lib/data/)
+Generated docs contain **smart symbols** - references to specific code elements:
 
-### 2. Feature View (`--mode feature`)
+```markdown
+The [`AuthService`][auth-service] handles user authentication by delegating
+to the [`AuthRepository`][auth-repo] for data persistence.
 
-Groups symbols by business feature:
-
-- Detects features from directory structure (`features/auth/`, `modules/payment/`)
-- Clusters related symbols using call graph analysis
-- Shows each feature's layers (UI, Service, Data components)
-
-Example output:
-```
-## auth
-- LoginPage (UI)
-- SignupPage (UI)
-- AuthService (Service)
-- AuthRepository (Data)
-- User (Model)
-
-## products
-- ProductListPage (UI)
-- ProductDetailPage (UI)
-- ProductService (Service)
-- ProductRepository (Data)
-- Product (Model)
+[auth-service]: scip-dart://lib/services/auth_service.dart/AuthService#
+[auth-repo]: scip-dart://lib/repositories/auth_repository.dart/AuthRepository#
 ```
 
-### 3. Module View (`--mode module`)
+These symbols enable:
+- **Navigation**: Click to jump to code or related docs
+- **Change tracking**: When the referenced symbol changes, the doc section is marked dirty
+- **Bidirectional linking**: Code knows which docs reference it
 
-Shows package/module structure for monorepos:
+## Dependency Tracking
 
-```
-## hologram_core
-- DirectedGraph
-- TreeNode
-- ...
+SCIP provides the dependency graph for efficient invalidation:
 
-## hologram_server
-- WidgetDefinitionVisitor
-- AnalyzerService
-- ...
-```
+### What Triggers Regeneration?
 
-## Navigation Detection
+| Scope | Regenerate When |
+|-------|-----------------|
+| Folder doc | Any file in folder changes, or any referenced symbol changes |
+| Module doc | Any child folder doc changes |
+| Project doc | Any module doc changes |
 
-The navigation detector identifies screen-to-screen transitions:
-
-### Supported Navigation Patterns
-
-| Pattern | Detection Method |
-|---------|------------------|
-| go_router | AST parsing of `GoRoute`, `ShellRoute`, `StatefulShellRoute` |
-| Named routes | `context.goNamed()`, `context.pushNamed()` |
-| Path routes | `context.go('/path')`, `context.push('/path')` |
-| Route constants | `context.push(Routes.newProject)` |
-| Navigator.push | Regex pattern matching |
-| auto_route | Regex pattern matching |
-| GetX | Regex pattern matching |
-
-### Page Detection
-
-Only actual "pages" are included in the navigation graph:
-
-1. **Naming convention**: Class ends with `Page`, `Screen`, or `View`
-2. **Scaffold detection**: Class's `build()` method contains a `Scaffold` widget
-
-Non-page widgets that trigger navigation are captured in the trigger context.
-
-### Trigger Context
-
-Each navigation edge includes a detailed trigger chain showing the path from page to navigation call:
+### How It Works
 
 ```
-DashboardPage → _buildProjectCard() → onTap: → context.push('/project/$id')
+1. Each doc section tracks its dependencies:
+   - Source files it was generated from
+   - SCIP symbols it references (smart tokens)
+   - Child docs it synthesizes from
+
+2. On file change:
+   - SCIP detects changed symbols via hash comparison
+   - Mark dependent doc sections as dirty
+   - Propagate dirty state up the hierarchy
+
+3. On doc regeneration:
+   - Only regenerate dirty sections
+   - Re-link smart symbols to current code
+   - Update dependency manifest
 ```
 
-The chain includes:
-- Class/method boundaries
-- Widget instantiation context
-- Callback parameters (`onTap:`, `onPressed:`)
-- Control flow (`if(condition)`)
+### Manifest Structure
 
-### Output Formats
-
-**JSON** (`--format json`):
 ```json
 {
-  "nodes": [
-    {"id": "LoginPage", "label": "LoginPage", "type": "page"},
-    {"id": "HomePage", "label": "HomePage", "type": "page"}
-  ],
-  "edges": [
-    {
-      "from": "LoginPage",
-      "to": "HomePage", 
-      "trigger": "LoginPage → _handleLogin() → onPressed: → if(success)",
-      "routePath": "/home"
+  "version": 1,
+  "sections": {
+    "modules/auth": {
+      "generatedAt": "2025-01-12T10:00:00Z",
+      "sourceFiles": ["lib/features/auth/*.dart"],
+      "referencedSymbols": [
+        "scip-dart://lib/services/auth_service.dart/AuthService#",
+        "scip-dart://lib/repositories/auth_repository.dart/AuthRepository#"
+      ],
+      "childDocs": ["folders/lib/features/auth/login", "folders/lib/features/auth/signup"],
+      "contentHash": "abc123..."
     }
-  ],
-  "entryPoint": "SplashPage"
+  }
 }
 ```
 
-**Text** (`--format text`):
-```
-# Navigation Graph
+## Cache Structure
 
-Entry Point: SplashPage
-
-## Pages
-- SplashPage
-- LoginPage
-- HomePage
-- SettingsPage
-
-## Navigation Flows
-
-SplashPage
-  → LoginPage [/login]
-    trigger: SplashPage → initState() → if(!isLoggedIn)
-  → HomePage [/home]
-    trigger: SplashPage → initState() → if(isLoggedIn)
-
-LoginPage
-  → HomePage [/home]
-    trigger: LoginPage → _handleLogin() → onPressed:
-```
-
-## Cache Integration
-
-Auto-generated docs can be stored alongside SCIP indexes:
+Docs are stored alongside SCIP indexes:
 
 ```
 /path/to/package/.dart_context/
-├── index.scip          # SCIP index
-├── manifest.json       # Cache validation
-└── docs/               # Auto-generated docs
-    ├── index.md
-    ├── architecture-layer.md
-    ├── architecture-feature.md
-    ├── navigation.json
-    └── lib/            # Per-folder docs (future)
-        └── features/
-            └── auth/
-                └── README.md
+├── index.scip              # SCIP index
+├── manifest.json           # Index manifest
+└── docs/
+    ├── manifest.json       # Doc dependency manifest
+    ├── index.md            # Project-level doc
+    ├── modules/
+    │   ├── auth.md
+    │   └── products.md
+    └── folders/
+        └── lib/
+            └── features/
+                └── auth/
+                    └── README.md
 ```
 
-### Incremental Documentation Updates
-
-Docs follow the same invalidation logic as the SCIP index:
-
-1. **File hash tracking**: Each doc knows which source files it depends on
-2. **Dirty detection**: When source files change, dependent docs are marked dirty
-3. **Bottom-up regeneration**: 
-   - Folder-level docs regenerate first
-   - Parent docs that depend on changed children regenerate next
-   - Only affected docs are regenerated
-
-### External Dependency Docs
-
-Docs for external packages are cached globally:
+### External Package Docs
 
 ```
 ~/.dart_context/
 ├── hosted/http-1.2.0/
 │   ├── index.scip
 │   └── docs/
-│       ├── index.md
-│       └── architecture-layer.md
+│       ├── manifest.json
+│       └── index.md        # LLM-generated overview of http package
 └── flutter/3.32.0/material/
     ├── index.scip
     └── docs/
-        └── index.md
+        └── index.md        # Generated once, cached forever per version
 ```
 
 Benefits:
-- Generate once per package version, reuse forever
-- No LLM costs for unchanged dependencies
-- Cross-project documentation consistency
+- Generate once per package version
+- Shared across all projects using that version
+- No LLM cost for unchanged dependencies
 
-## Classification Details
+## LLM Context Building
 
-### Layer Classification Signals
+When generating a doc section, we provide the LLM with:
 
-| Signal | Weight | Example |
-|--------|--------|---------|
-| SCIP type hierarchy | High | `extends StatelessWidget` → UI |
-| SCIP call graph | High | Called by UI, calls Data → Service |
-| Naming convention | Medium | `*Repository` → Data |
-| File path | Medium | `lib/services/` → Service |
-| Import analysis | Low | Imports `package:flutter/material.dart` → UI |
+### For Folder-Level Docs
 
-### Feature Detection Signals
+```
+1. Source files in the folder (filtered to relevant parts)
+2. Doc comments (///) from those files
+3. SCIP symbol information:
+   - Public API surface
+   - Type hierarchy
+   - Call graph (what calls what)
+4. Existing folder README if present (for context)
+```
 
-| Signal | Description |
-|--------|-------------|
-| Directory structure | `features/auth/`, `modules/payment/` |
-| Naming prefix | `Auth*`, `Product*` |
-| Call graph clustering | Symbols that call each other frequently |
+### For Module-Level Docs
 
-## Comparison with Manual Documentation
+```
+1. All child folder docs
+2. Module's public API surface (from SCIP)
+3. Cross-folder dependencies (from call graph)
+4. Existing module docs if present
+```
 
-| Aspect | Auto-Generated | Manual |
-|--------|---------------|--------|
-| Maintenance | Automatic | Requires effort |
-| Accuracy | Reflects actual code | Can become stale |
-| Depth | Structure-focused | Can include rationale |
-| Speed | Instant | Time-consuming |
-| Use case | AI consumption, onboarding | Design decisions, ADRs |
+### For Project-Level Docs
 
-**Recommendation**: Use auto-generated docs for structure/navigation, manual docs for architectural decisions and rationale.
+```
+1. All module docs
+2. Project structure overview
+3. Entry points and navigation flow
+4. README.md if present
+```
 
-## Future Enhancements
+## Incremental Update Example
 
-- [ ] Widget preview links (visual documentation)
-- [ ] Per-folder README generation with LLM synthesis
-- [ ] Smart token tracking for doc-to-code links
-- [ ] Dependency-aware incremental doc regeneration
-- [ ] External package doc generation and caching
+```
+Initial state:
+  - All docs generated
+  - Manifest tracks dependencies
 
-## Related Documentation
+Developer modifies: lib/features/auth/login_service.dart
 
-- [Query DSL Reference](query-dsl.md) - Symbol queries
+Change detection:
+  1. SCIP hash comparison detects file changed
+  2. Find doc sections referencing symbols in that file:
+     - folders/lib/features/auth/README.md (direct)
+     - modules/auth.md (parent)
+     - index.md (root)
+  3. Mark these as dirty
+
+Regeneration:
+  1. Regenerate folders/lib/features/auth/README.md (reads new code)
+  2. Regenerate modules/auth.md (reads updated folder doc)
+  3. Regenerate index.md (reads updated module doc)
+  4. Update manifest with new hashes
+
+Result:
+  - Only 3 LLM calls instead of full project regeneration
+  - Smart symbols re-linked to current code
+```
+
+## Comparison with DeepWiki/Code Wiki
+
+| Aspect | code_context | DeepWiki/Code Wiki |
+|--------|--------------|-------------------|
+| Index | SCIP (we control it) | Their own static analysis |
+| Languages | Dart-focused (extensible) | Multi-language |
+| Dependency tracking | SCIP symbols + call graph | File-level or custom |
+| External packages | Cached per version | Single repo only? |
+| Incremental updates | Symbol-level granularity | File-level? |
+| Hosting | Self-hosted / local | Cloud service |
+| Cost | Pay for LLM only | Subscription |
+
+### Our Advantages
+
+1. **SCIP integration**: We already have the index, just add doc layer
+2. **Symbol-level tracking**: Finer granularity than file-level
+3. **External package docs**: Generate once, cache forever
+4. **Dart expertise**: Deep Flutter/Dart knowledge (navigation, widgets, etc.)
+5. **Local-first**: No cloud dependency, run anywhere
+
+## CLI Commands (Planned)
+
+```bash
+# Generate all docs (or update dirty ones)
+code_context docs generate -p /path/to/project
+
+# Force full regeneration
+code_context docs generate -p /path/to/project --force
+
+# Show dirty status (what needs regeneration)
+code_context docs status -p /path/to/project
+
+# Generate docs for external dependencies
+code_context docs generate-deps -p /path/to/project
+
+# View a doc section
+code_context docs view auth
+
+# List doc sections and their status
+code_context docs list
+```
+
+## Implementation Status
+
+- [ ] Doc context builder (extract relevant code for LLM)
+- [ ] LLM synthesis pipeline (prompt engineering)
+- [ ] Smart symbol extraction and linking
+- [ ] Dependency manifest and tracking
+- [ ] Dirty detection and incremental regeneration
+- [ ] External package doc generation
+- [ ] CLI commands
+
+## Related
+
 - [Architecture](architecture.md) - System design
-- [Monorepo Support](monorepo.md) - Multi-package workspaces
+- [Flutter Navigation](flutter-navigation.md) - Navigation flow detection
+- [Cross-Package Queries](cross-package-queries.md) - External package indexing

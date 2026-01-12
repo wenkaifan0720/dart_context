@@ -129,7 +129,7 @@ Detects:
 - Navigation calls (go_router, Navigator, auto_route, GetX)
 - Trigger context (call chain leading to navigation)
 
-See [Auto-Generated Docs](auto-docs.md) for full details.
+See [Flutter Navigation](flutter-navigation.md) for full details.
 
 ## CLI Subcommands
 

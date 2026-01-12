@@ -168,36 +168,313 @@ Benefits:
 
 ## LLM Context Building
 
-When generating a doc section, we provide the LLM with:
+### Folder-Level Docs (Input)
 
-### For Folder-Level Docs
+The lowest level - generated directly from source code:
+
+```yaml
+# Context sent to LLM for: lib/features/auth/
+
+metadata:
+  path: lib/features/auth/
+  purpose_hint: "auth feature (from path)"
+  
+files:
+  - name: auth_service.dart
+    doc_comments: |
+      /// Handles user authentication and session management.
+      /// 
+      /// Uses [AuthRepository] for persistence and [TokenManager] for JWT handling.
+    public_api:
+      - "class AuthService"
+      - "  Future<User> login(String email, String password)"
+      - "  Future<void> logout()"
+      - "  Stream<AuthState> get authStateChanges"
+    
+  - name: auth_repository.dart
+    doc_comments: |
+      /// Data layer for authentication.
+    public_api:
+      - "class AuthRepository"
+      - "  Future<UserCredential> signIn(String email, String password)"
+
+symbols:  # From SCIP
+  definitions:
+    - id: "scip://lib/features/auth/auth_service.dart/AuthService#"
+      name: AuthService
+      kind: class
+      
+  relationships:
+    - AuthService calls AuthRepository.signIn
+    - AuthService calls TokenManager.store
+    - LoginPage calls AuthService.login
+    
+  imports:
+    - package:firebase_auth/firebase_auth.dart
+    - ../core/token_manager.dart
+
+existing_readme: |
+  # Auth Feature
+  (existing content if any - preserve user additions)
+```
+
+### Module-Level Docs (Input)
+
+Synthesized from child folder docs:
+
+```yaml
+# Context sent to LLM for: auth module
+
+metadata:
+  name: auth
+  folders: [lib/features/auth/, lib/services/auth/]
+
+child_docs:
+  - path: lib/features/auth/
+    content: |
+      ## Auth Feature
+      The `AuthService` handles user authentication...
+      
+  - path: lib/services/auth/
+    content: |
+      ## Auth Services
+      Token management and session handling...
+
+cross_folder_dependencies:
+  - auth/AuthService -> core/TokenManager
+  - auth/AuthRepository -> data/UserDao
+
+public_api_surface:
+  - AuthService (main entry point)
+  - AuthState (state enum)
+  - User (model)
+```
+
+### Project-Level Docs (Input)
+
+Synthesized from module docs:
+
+```yaml
+# Context sent to LLM for: project root
+
+metadata:
+  name: my_flutter_app
+  description: "From pubspec.yaml"
+  
+module_docs:
+  - name: auth
+    summary: "User authentication and session management"
+  - name: products  
+    summary: "Product catalog and inventory"
+  - name: core
+    summary: "Shared utilities and base classes"
+
+entry_points:
+  - main.dart -> MyApp -> MaterialApp
+  
+navigation_summary:  # From flutter-navigation
+  entry: SplashPage
+  main_flows:
+    - SplashPage -> LoginPage -> HomePage
+    - HomePage -> ProductListPage -> ProductDetailPage
+
+existing_readme: |
+  # My Flutter App
+  (preserve existing content)
+```
+
+## LLM Output Structure
+
+### Folder-Level Doc Output
+
+```markdown
+# Auth Feature
+
+## Overview
+
+The auth feature handles user authentication, session management, and 
+credential persistence. It integrates with Firebase Auth for identity 
+and uses local token storage for offline capability.
+
+## Key Components
+
+- [`AuthService`][auth-service] - Main authentication orchestrator
+  - `login(email, password)` - Authenticate user credentials
+  - `logout()` - Clear session and tokens
+  - `authStateChanges` - Stream of authentication state updates
+
+- [`AuthRepository`][auth-repo] - Data layer for auth operations
+  - Wraps Firebase Auth SDK
+  - Handles credential caching
+
+## How It Works
+
+1. User enters credentials on [`LoginPage`][login-page]
+2. [`AuthService.login()`][auth-login] validates and calls repository
+3. On success, tokens stored via [`TokenManager`][token-mgr]
+4. [`authStateChanges`][auth-stream] emits new state, triggering navigation
+
+## Dependencies
+
+- **Internal**: [`TokenManager`][token-mgr] (core), [`UserDao`][user-dao] (data)
+- **External**: `firebase_auth`, `shared_preferences`
+
+## Related
+
+- [Login Page](../ui/login_page.md) - UI for this feature
+- [Token Manager](../core/token_manager.md) - Token storage
+
+<!-- Smart Symbol Definitions -->
+[auth-service]: scip://lib/features/auth/auth_service.dart/AuthService#
+[auth-repo]: scip://lib/features/auth/auth_repository.dart/AuthRepository#
+[auth-login]: scip://lib/features/auth/auth_service.dart/AuthService#login().
+[login-page]: scip://lib/ui/login_page.dart/LoginPage#
+[token-mgr]: scip://lib/core/token_manager.dart/TokenManager#
+[auth-stream]: scip://lib/features/auth/auth_service.dart/AuthService#authStateChanges.
+[user-dao]: scip://lib/data/user_dao.dart/UserDao#
+```
+
+### Module-Level Doc Output
+
+```markdown
+# Auth Module
+
+## Overview
+
+Authentication and authorization for the application. Manages user 
+identity, sessions, and access control.
+
+## Components
+
+| Folder | Purpose |
+|--------|---------|
+| [features/auth/](./folders/lib/features/auth/) | Core auth logic |
+| [services/auth/](./folders/lib/services/auth/) | Token & session mgmt |
+| [ui/auth/](./folders/lib/ui/auth/) | Login, signup screens |
+
+## Public API
+
+The module exposes these key symbols:
+
+- [`AuthService`][auth-service] - Primary interface for auth operations
+- [`AuthState`][auth-state] - Enum: `authenticated`, `unauthenticated`, `loading`
+- [`User`][user] - Authenticated user model
+
+## Data Flow
 
 ```
-1. Source files in the folder (filtered to relevant parts)
-2. Doc comments (///) from those files
-3. SCIP symbol information:
-   - Public API surface
-   - Type hierarchy
-   - Call graph (what calls what)
-4. Existing folder README if present (for context)
+LoginPage (UI)
+    ↓ calls
+AuthService (Service)
+    ↓ calls
+AuthRepository (Data)
+    ↓ uses
+Firebase Auth (External)
 ```
 
-### For Module-Level Docs
+## Integration Points
+
+- **Called by**: Navigation guards, profile features
+- **Calls**: Core (TokenManager), Data (UserDao)
+
+[auth-service]: scip://lib/features/auth/auth_service.dart/AuthService#
+[auth-state]: scip://lib/features/auth/auth_state.dart/AuthState#
+[user]: scip://lib/models/user.dart/User#
+```
+
+### Project-Level Doc Output
+
+```markdown
+# My Flutter App
+
+## Overview
+
+E-commerce application with user authentication, product catalog, 
+and order management.
+
+## Modules
+
+| Module | Description | Entry Point |
+|--------|-------------|-------------|
+| [Auth](./modules/auth.md) | User authentication | `AuthService` |
+| [Products](./modules/products.md) | Product catalog | `ProductService` |
+| [Orders](./modules/orders.md) | Order management | `OrderService` |
+| [Core](./modules/core.md) | Shared utilities | - |
+
+## Architecture
 
 ```
-1. All child folder docs
-2. Module's public API surface (from SCIP)
-3. Cross-folder dependencies (from call graph)
-4. Existing module docs if present
+┌─────────────────────────────────────────┐
+│                   UI                     │
+│  LoginPage, HomePage, ProductListPage   │
+├─────────────────────────────────────────┤
+│                Services                  │
+│  AuthService, ProductService, OrderSvc  │
+├─────────────────────────────────────────┤
+│              Repositories               │
+│  AuthRepo, ProductRepo, OrderRepo       │
+├─────────────────────────────────────────┤
+│                 Data                     │
+│  Firebase, Local DB, API Client         │
+└─────────────────────────────────────────┘
 ```
 
-### For Project-Level Docs
+## User Flows
+
+### Authentication
+[`SplashPage`][splash] → [`LoginPage`][login] → [`HomePage`][home]
+
+### Shopping  
+[`HomePage`][home] → [`ProductListPage`][products] → [`ProductDetailPage`][detail] → [`CartPage`][cart]
+
+## Getting Started
+
+See [Getting Started Guide](./getting-started.md) for setup instructions.
+
+[splash]: scip://lib/ui/splash_page.dart/SplashPage#
+[login]: scip://lib/ui/login_page.dart/LoginPage#
+[home]: scip://lib/ui/home_page.dart/HomePage#
+[products]: scip://lib/ui/product_list_page.dart/ProductListPage#
+[detail]: scip://lib/ui/product_detail_page.dart/ProductDetailPage#
+[cart]: scip://lib/ui/cart_page.dart/CartPage#
+```
+
+## Smart Symbol Format
+
+Smart symbols use a `scip://` URI scheme:
 
 ```
-1. All module docs
-2. Project structure overview
-3. Entry points and navigation flow
-4. README.md if present
+scip://<relative-path>/<SymbolName>#[member]
+
+Examples:
+- scip://lib/auth/service.dart/AuthService#
+- scip://lib/auth/service.dart/AuthService#login().
+- scip://lib/auth/service.dart/AuthService#authState.
+```
+
+These can be resolved to:
+1. **Source code location** - Jump to definition
+2. **Related doc section** - If that symbol has its own doc
+3. **Hover info** - Show signature and doc comment
+
+## Prompt Template (Example)
+
+```
+You are generating documentation for a Dart/Flutter codebase folder.
+
+## Context
+{folder_context_yaml}
+
+## Instructions
+1. Write clear, concise documentation for developers
+2. Reference symbols using [Name][id] markdown link syntax
+3. Include a "Smart Symbol Definitions" section at the end with scip:// URIs
+4. Preserve any existing README content, integrating new information
+5. Focus on HOW things work, not just WHAT exists
+6. Mention dependencies and integration points
+
+## Output Format
+Use the folder-level doc structure shown above.
 ```
 
 ## Incremental Update Example

@@ -27,6 +27,8 @@ code_context provides a human and LLM-friendly query DSL for navigating your cod
 | `get <scip-id>` | Direct lookup by SCIP symbol ID | `get "scip-dart pub ..."` |
 | `files` | List all indexed files | `files` |
 | `stats` | Get index statistics | `stats` |
+| `classify [pattern]` | Classify symbols by layer/feature | `classify Auth*` |
+| `storyboard` | Generate navigation flow graph | `storyboard` |
 
 ## Pattern Syntax
 
@@ -94,6 +96,56 @@ find Auth* kind:class | members   # Get members of all Auth classes
 find *Service | refs              # Find refs for all services
 grep TODO | refs                  # Find refs for symbols containing TODOs
 members MyClass | source          # Get source for all members
+```
+
+## Classification & Navigation
+
+### classify
+
+Classify symbols by architectural layer and feature:
+
+```bash
+classify              # Classify all symbols
+classify Auth*        # Classify symbols matching pattern
+classify kind:class   # Classify only classes
+```
+
+Output includes:
+- **Layer**: UI, Service, Data, Model, Utility
+- **Feature**: Detected feature (auth, products, etc.)
+- **Confidence**: Classification confidence score
+- **Signals**: What determined the classification
+
+### storyboard
+
+Generate navigation flow graph for Flutter apps:
+
+```bash
+storyboard            # Generate navigation graph
+```
+
+Detects:
+- Page widgets (classes ending in Page/Screen/View with Scaffold)
+- Navigation calls (go_router, Navigator, auto_route, GetX)
+- Trigger context (call chain leading to navigation)
+
+See [Auto-Generated Docs](auto-docs.md) for full details.
+
+## CLI Subcommands
+
+Beyond the query DSL, the CLI provides additional commands:
+
+```bash
+# Generate documentation
+code_context generate-docs -p /path/to/project
+code_context generate-docs -p /path/to/project --mode layer
+code_context generate-docs -p /path/to/project --format json
+
+# Interactive mode
+code_context -i
+
+# Watch mode
+code_context -w
 ```
 
 ## Examples

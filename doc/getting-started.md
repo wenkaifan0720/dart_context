@@ -83,6 +83,7 @@ code_context --no-cache stats
 
 - [Query DSL Reference](query-dsl.md) - Full command reference
 - [Architecture](architecture.md) - How it works
+- [Auto-Generated Docs](auto-docs.md) - Generate architecture and navigation docs
 - [MCP Integration](mcp-integration.md) - Using with Cursor/AI agents
 - [Monorepo Support](monorepo.md) - Multi-package workspaces
 

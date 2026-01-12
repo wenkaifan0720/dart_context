@@ -89,6 +89,9 @@ code_context/
 | `PackageRegistry` | Manages local + external package indexes |
 | `PackageDiscovery` | Discovers packages in monorepos |
 | `ExternalIndexBuilder` | Pre-computes indexes for SDK/dependencies |
+| `FlutterNavigationDetector` | Detects navigation patterns (go_router, Navigator, etc.) |
+| `DartSymbolClassifier` | Classifies symbols by layer/feature using SCIP data |
+| `DartNavigationChainExtractor` | Extracts call chains using Dart Analyzer AST |
 
 ## How It Works
 

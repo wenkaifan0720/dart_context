@@ -57,12 +57,23 @@ class LinkTransformer {
     multiLine: true,
   );
 
+  /// Pattern to match scip:// inline links in markdown.
+  ///
+  /// Matches:
+  /// - `[label](scip://path/to/file/Symbol#member)`
+  /// - `[label](scip://package@version/path/Symbol#)`
+  static final _inlineLinkPattern = RegExp(
+    r'\[([^\]]+)\]\(scip://([^)]+)\)',
+    multiLine: true,
+  );
+
   /// Transform a source doc to rendered doc.
   ///
   /// Replaces all `scip://` URIs with navigable links based on the
   /// specified [style].
   String transform(String sourceDoc, {LinkStyle style = LinkStyle.relative}) {
-    return sourceDoc.replaceAllMapped(_refPattern, (match) {
+    // First, transform reference-style links
+    var result = sourceDoc.replaceAllMapped(_refPattern, (match) {
       final label = match.group(1)!;
       final scipUri = match.group(2)!;
 
@@ -73,6 +84,21 @@ class LinkTransformer {
         return '[$label]: #symbol-not-found';
       }
     });
+
+    // Then, transform inline links
+    result = result.replaceAllMapped(_inlineLinkPattern, (match) {
+      final label = match.group(1)!;
+      final scipUri = match.group(2)!;
+
+      final resolved = resolveUri(scipUri, style: style);
+      if (resolved != null) {
+        return '[$label]($resolved)';
+      } else {
+        return '[$label](#symbol-not-found)';
+      }
+    });
+
+    return result;
   }
 
   /// Resolve a single scip:// URI to a navigable link.
@@ -82,10 +108,9 @@ class LinkTransformer {
     final parsed = ScipUri.parse(scipUri);
     if (parsed == null) return null;
 
-    // Find the symbol in the index
+    // Strategy 1: Try exact symbol ID match
     final symbolId = parsed.toSymbolId();
     final definition = index.findDefinition(symbolId);
-
     if (definition != null) {
       return _formatLink(
         file: definition.file,
@@ -94,7 +119,7 @@ class LinkTransformer {
       );
     }
 
-    // Try looking up by the URI path directly
+    // Strategy 2: Try looking up by the URI path directly
     final symbol = index.getSymbol(symbolId);
     if (symbol != null && symbol.file != null) {
       final def = index.findDefinition(symbol.symbol);
@@ -102,6 +127,51 @@ class LinkTransformer {
         return _formatLink(
           file: def.file,
           line: def.line + 1,
+          style: style,
+        );
+      }
+    }
+
+    // Strategy 3: Search for symbol by name in the specified file
+    // This handles simplified URIs like scip://lib/path/file.dart/SymbolName#
+    // Escape regex special characters in the symbol name
+    final escapedName = RegExp.escape(parsed.symbolName);
+    final symbols = index.findSymbols(escapedName);
+    for (final sym in symbols) {
+      // Check if the symbol is in the expected file
+      if (sym.file != null && parsed.path.contains(sym.file!.replaceAll('`', ''))) {
+        final def = index.findDefinition(sym.symbol);
+        if (def != null) {
+          return _formatLink(
+            file: def.file,
+            line: def.line + 1,
+            style: style,
+          );
+        }
+        // Fall back to file location if no definition found
+        return _formatLink(
+          file: sym.file!,
+          line: 1,
+          style: style,
+        );
+      }
+    }
+
+    // Strategy 4: Try partial match on symbol name alone
+    if (symbols.isNotEmpty) {
+      final firstMatch = symbols.first;
+      final def = index.findDefinition(firstMatch.symbol);
+      if (def != null) {
+        return _formatLink(
+          file: def.file,
+          line: def.line + 1,
+          style: style,
+        );
+      }
+      if (firstMatch.file != null) {
+        return _formatLink(
+          file: firstMatch.file!,
+          line: 1,
           style: style,
         );
       }
@@ -145,7 +215,12 @@ class LinkTransformer {
   /// Extract all scip:// URIs from a document.
   List<String> extractScipUris(String doc) {
     final uris = <String>[];
+    // Extract from reference-style links
     for (final match in _refPattern.allMatches(doc)) {
+      uris.add(match.group(2)!);
+    }
+    // Extract from inline links
+    for (final match in _inlineLinkPattern.allMatches(doc)) {
       uris.add(match.group(2)!);
     }
     return uris;

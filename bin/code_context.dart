@@ -4,6 +4,16 @@ import 'dart:io';
 
 import 'package:args/args.dart';
 import 'package:code_context/code_context.dart';
+import 'package:scip_server/scip_server.dart' show
+    ContextBuilder,
+    ContextFormatter,
+    DirtyTracker,
+    DocManifest,
+    FolderDependencyGraph,
+    LinkStyle,
+    LinkTransformer,
+    StructureHash,
+    StubDocGenerator;
 
 void main(List<String> arguments) async {
   // Check for subcommands first
@@ -26,6 +36,9 @@ void main(List<String> arguments) async {
         return;
       case 'generate-docs':
         await _generateDocs(arguments.skip(1).toList());
+        return;
+      case 'docs':
+        await _handleDocs(arguments.skip(1).toList());
         return;
     }
   }
@@ -178,6 +191,7 @@ void _printUsage(ArgParser parser) {
   stdout.writeln(parser.usage);
   stdout.writeln('');
   stdout.writeln('Subcommands:');
+  stdout.writeln('  docs <subcommand>      Auto-docs pipeline (status, context, generate, resolve)');
   stdout.writeln('  generate-docs [opts]   Generate documentation to docs/');
   stdout.writeln('  index-sdk <sdk-path>   Pre-index the Dart SDK');
   stdout.writeln('  index-flutter [path]   Pre-index Flutter packages');
@@ -1213,4 +1227,544 @@ String _formatByModule(CodeContext context) {
   }
   
   return buffer.toString();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AUTO-DOCS PIPELINE COMMANDS
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Handle the `docs` subcommand and its subcommands.
+Future<void> _handleDocs(List<String> args) async {
+  if (args.isEmpty) {
+    _printDocsUsage();
+    exit(1);
+  }
+
+  final subcommand = args.first;
+  final subArgs = args.skip(1).toList();
+
+  switch (subcommand) {
+    case 'status':
+      await _docsStatus(subArgs);
+    case 'context':
+      await _docsContext(subArgs);
+    case 'generate':
+      await _docsGenerate(subArgs);
+    case 'resolve':
+      await _docsResolve(subArgs);
+    case 'help':
+    case '--help':
+    case '-h':
+      _printDocsUsage();
+    default:
+      stderr.writeln('Unknown docs subcommand: $subcommand');
+      _printDocsUsage();
+      exit(1);
+  }
+}
+
+void _printDocsUsage() {
+  stdout.writeln('Auto-docs pipeline for folder-level documentation.');
+  stdout.writeln('');
+  stdout.writeln('Usage: code_context docs <subcommand> [options]');
+  stdout.writeln('');
+  stdout.writeln('Subcommands:');
+  stdout.writeln('  status    Show what needs regeneration');
+  stdout.writeln('  context   Build and output context YAML for a folder');
+  stdout.writeln('  generate  Generate/update docs (uses stub generator for now)');
+  stdout.writeln('  resolve   Re-resolve links only (no LLM calls)');
+  stdout.writeln('');
+  stdout.writeln('Options (all subcommands):');
+  stdout.writeln('  -p, --project <path>   Path to the Dart project (default: .)');
+  stdout.writeln('');
+  stdout.writeln('Examples:');
+  stdout.writeln('  code_context docs status');
+  stdout.writeln('  code_context docs status -p /path/to/project');
+  stdout.writeln('  code_context docs context -f lib/features/auth');
+  stdout.writeln('  code_context docs generate');
+  stdout.writeln('  code_context docs generate --force');
+  stdout.writeln('  code_context docs resolve');
+  stdout.writeln('  code_context docs resolve --style github');
+}
+
+/// Show documentation status - what needs regeneration.
+Future<void> _docsStatus(List<String> args) async {
+  final parser = ArgParser()
+    ..addOption(
+      'project',
+      abbr: 'p',
+      help: 'Path to the Dart project',
+      defaultsTo: '.',
+    )
+    ..addFlag(
+      'verbose',
+      abbr: 'v',
+      help: 'Show detailed information',
+      defaultsTo: false,
+    )
+    ..addFlag('help', abbr: 'h', help: 'Show help', negatable: false);
+
+  final parsed = parser.parse(args);
+  if (parsed['help'] as bool) {
+    stdout.writeln('Show documentation status - what needs regeneration.');
+    stdout.writeln('');
+    stdout.writeln('Usage: code_context docs status [options]');
+    stdout.writeln('');
+    stdout.writeln('Options:');
+    stdout.writeln(parser.usage);
+    return;
+  }
+
+  final projectPath = parsed['project'] as String;
+  final verbose = parsed['verbose'] as bool;
+
+  CodeContext? context;
+  try {
+    stderr.writeln('Opening project: $projectPath');
+    context = await CodeContext.open(projectPath, useCache: true);
+    stderr.writeln(
+      'Indexed ${context.stats['files']} files, '
+      '${context.stats['symbols']} symbols',
+    );
+    stderr.writeln('');
+
+    // Get the primary index
+    final index = context.registry.localPackages.isEmpty
+        ? context.registry.projectIndex
+        : context.registry.localPackages.values.first.index;
+
+    // Build folder dependency graph
+    final graph = FolderDependencyGraph.build(index);
+
+    // Load existing manifest
+    final manifestPath = '$projectPath/.dart_context/docs/manifest.json';
+    final manifest = await DocManifest.load(manifestPath);
+
+    // Create dirty tracker and compute state
+    final tracker = DirtyTracker(
+      index: index,
+      graph: graph,
+      manifest: manifest,
+    );
+    final dirtyState = tracker.computeDirtyState();
+
+    // Output status
+    stdout.writeln('Documentation Status');
+    stdout.writeln('====================');
+    stdout.writeln('');
+    stdout.writeln('Folders: ${graph.folders.length}');
+    stdout.writeln('Dirty folders: ${dirtyState.dirtyFolders.length}');
+    stdout.writeln('Dirty modules: ${dirtyState.dirtyModules.length}');
+    stdout.writeln('Project dirty: ${dirtyState.projectDirty}');
+    stdout.writeln('');
+
+    if (dirtyState.dirtyFolders.isNotEmpty) {
+      stdout.writeln('Folders needing regeneration:');
+      for (final folder in dirtyState.dirtyFolders.toList()..sort()) {
+        stdout.writeln('  - $folder');
+      }
+      stdout.writeln('');
+    }
+
+    if (dirtyState.dirtyModules.isNotEmpty) {
+      stdout.writeln('Modules needing regeneration:');
+      for (final module in dirtyState.dirtyModules.toList()..sort()) {
+        stdout.writeln('  - $module');
+      }
+      stdout.writeln('');
+    }
+
+    if (verbose) {
+      stdout.writeln('Generation order (${dirtyState.generationOrder.length} levels):');
+      for (var i = 0; i < dirtyState.generationOrder.length; i++) {
+        final level = dirtyState.generationOrder[i];
+        if (level.length == 1) {
+          stdout.writeln('  Level $i: ${level.first}');
+        } else {
+          stdout.writeln('  Level $i (cycle): ${level.join(', ')}');
+        }
+      }
+      stdout.writeln('');
+
+      stdout.writeln('Folder dependency graph stats:');
+      for (final entry in graph.stats.entries) {
+        stdout.writeln('  ${entry.key}: ${entry.value}');
+      }
+    }
+
+    if (!dirtyState.isDirty) {
+      stdout.writeln('All documentation is up to date.');
+    } else {
+      stdout.writeln('Run "code_context docs generate" to update documentation.');
+    }
+  } finally {
+    await context?.dispose();
+  }
+}
+
+/// Build and output context YAML for a folder.
+Future<void> _docsContext(List<String> args) async {
+  final parser = ArgParser()
+    ..addOption(
+      'project',
+      abbr: 'p',
+      help: 'Path to the Dart project',
+      defaultsTo: '.',
+    )
+    ..addOption(
+      'folder',
+      abbr: 'f',
+      help: 'Folder to build context for (required)',
+    )
+    ..addOption(
+      'output',
+      abbr: 'o',
+      help: 'Output file (default: stdout)',
+    )
+    ..addFlag('help', abbr: 'h', help: 'Show help', negatable: false);
+
+  final parsed = parser.parse(args);
+  if (parsed['help'] as bool) {
+    stdout.writeln('Build and output context YAML for LLM consumption.');
+    stdout.writeln('');
+    stdout.writeln('Usage: code_context docs context -f <folder> [options]');
+    stdout.writeln('');
+    stdout.writeln('Options:');
+    stdout.writeln(parser.usage);
+    stdout.writeln('');
+    stdout.writeln('Example:');
+    stdout.writeln('  code_context docs context -f lib/features/auth');
+    stdout.writeln('  code_context docs context -f lib/core -o context.yaml');
+    return;
+  }
+
+  final projectPath = parsed['project'] as String;
+  final folder = parsed['folder'] as String?;
+  final outputPath = parsed['output'] as String?;
+
+  if (folder == null) {
+    stderr.writeln('Error: --folder (-f) is required');
+    stderr.writeln('');
+    stderr.writeln('Usage: code_context docs context -f <folder>');
+    exit(1);
+  }
+
+  CodeContext? context;
+  try {
+    stderr.writeln('Opening project: $projectPath');
+    context = await CodeContext.open(projectPath, useCache: true);
+    stderr.writeln(
+      'Indexed ${context.stats['files']} files, '
+      '${context.stats['symbols']} symbols',
+    );
+    stderr.writeln('');
+
+    // Get the primary index
+    final index = context.registry.localPackages.isEmpty
+        ? context.registry.projectIndex
+        : context.registry.localPackages.values.first.index;
+
+    // Build folder dependency graph
+    final graph = FolderDependencyGraph.build(index);
+
+    // Check if folder exists
+    if (!graph.folders.contains(folder)) {
+      stderr.writeln('Error: Folder not found in index: $folder');
+      stderr.writeln('');
+      stderr.writeln('Available folders:');
+      for (final f in graph.folders.toList()..sort()) {
+        stderr.writeln('  - $f');
+      }
+      exit(1);
+    }
+
+    // Build context
+    stderr.writeln('Building context for: $folder');
+    final builder = ContextBuilder(
+      index: index,
+      graph: graph,
+      projectRoot: projectPath,
+    );
+    final docContext = await builder.buildForFolder(folder);
+
+    // Format as YAML
+    const formatter = ContextFormatter();
+    final yaml = formatter.formatAsYaml(docContext);
+
+    // Output
+    if (outputPath != null) {
+      final file = File(outputPath);
+      await file.parent.create(recursive: true);
+      await file.writeAsString(yaml);
+      stderr.writeln('Written to: $outputPath');
+    } else {
+      stdout.writeln(yaml);
+    }
+  } finally {
+    await context?.dispose();
+  }
+}
+
+/// Generate/update documentation.
+Future<void> _docsGenerate(List<String> args) async {
+  final parser = ArgParser()
+    ..addOption(
+      'project',
+      abbr: 'p',
+      help: 'Path to the Dart project',
+      defaultsTo: '.',
+    )
+    ..addFlag(
+      'force',
+      help: 'Force regeneration of all docs (ignore hashes)',
+      defaultsTo: false,
+    )
+    ..addFlag(
+      'dry-run',
+      help: 'Show what would be generated without writing files',
+      defaultsTo: false,
+    )
+    ..addFlag('help', abbr: 'h', help: 'Show help', negatable: false);
+
+  final parsed = parser.parse(args);
+  if (parsed['help'] as bool) {
+    stdout.writeln('Generate or update folder documentation.');
+    stdout.writeln('');
+    stdout.writeln('Usage: code_context docs generate [options]');
+    stdout.writeln('');
+    stdout.writeln('Options:');
+    stdout.writeln(parser.usage);
+    stdout.writeln('');
+    stdout.writeln('Note: Currently uses a stub generator. Real LLM integration');
+    stdout.writeln('will be added in a future phase.');
+    return;
+  }
+
+  final projectPath = parsed['project'] as String;
+  final force = parsed['force'] as bool;
+  final dryRun = parsed['dry-run'] as bool;
+
+  CodeContext? context;
+  try {
+    stderr.writeln('Opening project: $projectPath');
+    context = await CodeContext.open(projectPath, useCache: true);
+    stderr.writeln(
+      'Indexed ${context.stats['files']} files, '
+      '${context.stats['symbols']} symbols',
+    );
+    stderr.writeln('');
+
+    // Get the primary index
+    final index = context.registry.localPackages.isEmpty
+        ? context.registry.projectIndex
+        : context.registry.localPackages.values.first.index;
+
+    // Build folder dependency graph
+    final graph = FolderDependencyGraph.build(index);
+
+    // Load existing manifest
+    final manifestPath = '$projectPath/.dart_context/docs/manifest.json';
+    final manifest = await DocManifest.load(manifestPath);
+
+    // Create dirty tracker and compute state
+    final tracker = DirtyTracker(
+      index: index,
+      graph: graph,
+      manifest: manifest,
+    );
+    final dirtyState = tracker.computeDirtyState();
+
+    // Determine what to generate
+    final foldersToGenerate = force
+        ? graph.folders.toList()
+        : dirtyState.dirtyFolders.toList();
+
+    if (foldersToGenerate.isEmpty) {
+      stdout.writeln('All documentation is up to date.');
+      return;
+    }
+
+    stdout.writeln('Folders to generate: ${foldersToGenerate.length}');
+    if (dryRun) {
+      stdout.writeln('');
+      stdout.writeln('Dry run - would generate:');
+      for (final folder in foldersToGenerate..sort()) {
+        stdout.writeln('  - $folder');
+      }
+      return;
+    }
+
+    // Create output directories
+    final docsRoot = '$projectPath/.dart_context/docs';
+    final sourceDir = Directory('$docsRoot/source/folders');
+    final renderedDir = Directory('$docsRoot/rendered/folders');
+    await sourceDir.create(recursive: true);
+    await renderedDir.create(recursive: true);
+
+    // Generate docs in topological order
+    const generator = StubDocGenerator();
+    var generatedCount = 0;
+
+    for (final level in dirtyState.generationOrder) {
+      for (final folder in level) {
+        if (!foldersToGenerate.contains(folder)) continue;
+
+        stderr.write('Generating: $folder... ');
+
+        // Build context
+        final builder = ContextBuilder(
+          index: index,
+          graph: graph,
+          projectRoot: projectPath,
+          docsRoot: docsRoot,
+        );
+        final docContext = await builder.buildForFolder(folder);
+
+        // Generate doc
+        final generatedDoc = await generator.generateFolderDoc(docContext);
+
+        // Write source doc
+        final sourceFile = File('$docsRoot/source/folders/$folder/README.md');
+        await sourceFile.parent.create(recursive: true);
+        await sourceFile.writeAsString(generatedDoc.content);
+
+        // Transform links and write rendered doc
+        final transformer = LinkTransformer(
+          index: index,
+          docsRoot: docsRoot,
+        );
+        final renderedContent = transformer.transform(generatedDoc.content);
+        final renderedFile = File('$docsRoot/rendered/folders/$folder/README.md');
+        await renderedFile.parent.create(recursive: true);
+        await renderedFile.writeAsString(renderedContent);
+
+        // Update manifest
+        final structureHash = StructureHash.computeFolderHash(index, folder);
+        manifest.updateFolder(
+          folder,
+          DirtyTracker.createFolderState(
+            structureHash: structureHash,
+            docContent: generatedDoc.content,
+            internalDeps: docContext.current.internalDeps.toList(),
+            externalDeps: docContext.current.externalDeps.toList(),
+            smartSymbols: generatedDoc.smartSymbols,
+          ),
+        );
+
+        generatedCount++;
+        stderr.writeln('✓');
+      }
+    }
+
+    // Save manifest
+    await manifest.save(manifestPath);
+
+    stdout.writeln('');
+    stdout.writeln('Generated $generatedCount folder docs.');
+    stdout.writeln('Source docs: $docsRoot/source/folders/');
+    stdout.writeln('Rendered docs: $docsRoot/rendered/folders/');
+    stdout.writeln('Manifest: $manifestPath');
+  } finally {
+    await context?.dispose();
+  }
+}
+
+/// Re-resolve links in documentation.
+Future<void> _docsResolve(List<String> args) async {
+  final parser = ArgParser()
+    ..addOption(
+      'project',
+      abbr: 'p',
+      help: 'Path to the Dart project',
+      defaultsTo: '.',
+    )
+    ..addOption(
+      'style',
+      abbr: 's',
+      help: 'Link style for rendered docs',
+      defaultsTo: 'relative',
+      allowed: ['relative', 'github', 'absolute'],
+    )
+    ..addFlag('help', abbr: 'h', help: 'Show help', negatable: false);
+
+  final parsed = parser.parse(args);
+  if (parsed['help'] as bool) {
+    stdout.writeln('Re-resolve links in source docs to create rendered docs.');
+    stdout.writeln('');
+    stdout.writeln('Usage: code_context docs resolve [options]');
+    stdout.writeln('');
+    stdout.writeln('This is a cheap operation that updates line numbers in links');
+    stdout.writeln('without regenerating the documentation content.');
+    stdout.writeln('');
+    stdout.writeln('Options:');
+    stdout.writeln(parser.usage);
+    return;
+  }
+
+  final projectPath = parsed['project'] as String;
+  final styleStr = parsed['style'] as String;
+  final linkStyle = switch (styleStr) {
+    'github' => LinkStyle.github,
+    'absolute' => LinkStyle.absolute,
+    _ => LinkStyle.relative,
+  };
+
+  CodeContext? context;
+  try {
+    stderr.writeln('Opening project: $projectPath');
+    context = await CodeContext.open(projectPath, useCache: true);
+    stderr.writeln(
+      'Indexed ${context.stats['files']} files, '
+      '${context.stats['symbols']} symbols',
+    );
+    stderr.writeln('');
+
+    // Get the primary index
+    final index = context.registry.localPackages.isEmpty
+        ? context.registry.projectIndex
+        : context.registry.localPackages.values.first.index;
+
+    final docsRoot = '$projectPath/.dart_context/docs';
+    final sourceDir = Directory('$docsRoot/source/folders');
+    final renderedDir = Directory('$docsRoot/rendered/folders');
+
+    if (!await sourceDir.exists()) {
+      stderr.writeln('No source docs found. Run "code_context docs generate" first.');
+      return;
+    }
+
+    await renderedDir.create(recursive: true);
+
+    // Create transformer
+    final transformer = LinkTransformer(
+      index: index,
+      docsRoot: docsRoot,
+    );
+
+    // Find all source docs and transform them
+    var resolvedCount = 0;
+    await for (final entity in sourceDir.list(recursive: true)) {
+      if (entity is! File) continue;
+      if (!entity.path.endsWith('.md')) continue;
+
+      final relativePath = entity.path.substring(sourceDir.path.length);
+      stderr.write('Resolving: $relativePath... ');
+
+      final sourceContent = await entity.readAsString();
+      final renderedContent = transformer.transform(sourceContent, style: linkStyle);
+
+      final renderedFile = File('${renderedDir.path}$relativePath');
+      await renderedFile.parent.create(recursive: true);
+      await renderedFile.writeAsString(renderedContent);
+
+      resolvedCount++;
+      stderr.writeln('✓');
+    }
+
+    stdout.writeln('');
+    stdout.writeln('Resolved $resolvedCount docs with style: $styleStr');
+    stdout.writeln('Rendered docs: $docsRoot/rendered/folders/');
+  } finally {
+    await context?.dispose();
+  }
 }

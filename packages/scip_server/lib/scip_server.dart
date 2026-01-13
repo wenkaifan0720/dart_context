@@ -37,3 +37,8 @@ export 'src/docs/folder_graph.dart';
 export 'src/docs/topological_sort.dart';
 export 'src/docs/doc_manifest.dart';
 export 'src/docs/link_transformer.dart';
+export 'src/docs/context_extractor.dart';
+export 'src/docs/context_builder.dart';
+export 'src/docs/context_formatter.dart';
+export 'src/docs/dirty_tracker.dart';
+export 'src/docs/llm_interface.dart';

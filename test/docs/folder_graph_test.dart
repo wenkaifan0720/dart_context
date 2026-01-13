@@ -100,7 +100,8 @@ void main() {
 
         // lib/a depends on lib/b but not directly on lib/c
         expect(graph.getInternalDependencies('lib/a'), equals({'lib/b'}));
-        expect(graph.getInternalDependencies('lib/a'), isNot(contains('lib/c')));
+        expect(
+            graph.getInternalDependencies('lib/a'), isNot(contains('lib/c')));
       });
     });
 
@@ -124,8 +125,10 @@ void main() {
           },
         );
 
-        expect(graph.getExternalDependencies('lib/auth'), equals({'firebase_auth'}));
-        expect(graph.getExternalDependencies('lib/data'), containsAll(['sqflite', 'path']));
+        expect(graph.getExternalDependencies('lib/auth'),
+            equals({'firebase_auth'}));
+        expect(graph.getExternalDependencies('lib/data'),
+            containsAll(['sqflite', 'path']));
       });
     });
 

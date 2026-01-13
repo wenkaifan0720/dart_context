@@ -1,5 +1,11 @@
 import 'context_builder.dart';
 
+// Re-export LLM components for convenience
+export 'llm/llm_service.dart';
+export 'llm/anthropic_service.dart';
+export 'llm/doc_tools.dart';
+export 'llm/doc_agent.dart';
+
 /// A generated documentation result.
 class GeneratedDoc {
   const GeneratedDoc({

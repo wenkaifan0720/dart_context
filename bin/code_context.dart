@@ -13,7 +13,11 @@ import 'package:scip_server/scip_server.dart' show
     LinkStyle,
     LinkTransformer,
     StructureHash,
-    StubDocGenerator;
+    StubDocGenerator,
+    // Agentic LLM components
+    AnthropicService,
+    DocGenerationAgent,
+    DocToolRegistry;
 
 void main(List<String> arguments) async {
   // Check for subcommands first
@@ -1524,6 +1528,15 @@ Future<void> _docsGenerate(List<String> args) async {
       help: 'Show what would be generated without writing files',
       defaultsTo: false,
     )
+    ..addFlag(
+      'llm',
+      help: 'Use real LLM (Anthropic Claude) for generation',
+      defaultsTo: false,
+    )
+    ..addOption(
+      'api-key',
+      help: 'Anthropic API key (or set ANTHROPIC_API_KEY env var)',
+    )
     ..addFlag('help', abbr: 'h', help: 'Show help', negatable: false);
 
   final parsed = parser.parse(args);
@@ -1535,14 +1548,33 @@ Future<void> _docsGenerate(List<String> args) async {
     stdout.writeln('Options:');
     stdout.writeln(parser.usage);
     stdout.writeln('');
-    stdout.writeln('Note: Currently uses a stub generator. Real LLM integration');
-    stdout.writeln('will be added in a future phase.');
+    stdout.writeln('By default uses a stub generator. Use --llm for real AI generation.');
+    stdout.writeln('');
+    stdout.writeln('Examples:');
+    stdout.writeln('  code_context docs generate');
+    stdout.writeln('  code_context docs generate --llm');
+    stdout.writeln('  code_context docs generate --llm --api-key sk-...');
+    stdout.writeln('  ANTHROPIC_API_KEY=sk-... code_context docs generate --llm');
     return;
   }
 
   final projectPath = parsed['project'] as String;
   final force = parsed['force'] as bool;
   final dryRun = parsed['dry-run'] as bool;
+  final useLlm = parsed['llm'] as bool;
+  final apiKeyArg = parsed['api-key'] as String?;
+
+  // Resolve API key
+  String? apiKey;
+  if (useLlm) {
+    apiKey = apiKeyArg ?? Platform.environment['ANTHROPIC_API_KEY'];
+    if (apiKey == null || apiKey.isEmpty) {
+      stderr.writeln('Error: Anthropic API key required for --llm mode.');
+      stderr.writeln('');
+      stderr.writeln('Provide via --api-key or ANTHROPIC_API_KEY environment variable.');
+      exit(1);
+    }
+  }
 
   CodeContext? context;
   try {
@@ -1585,8 +1617,14 @@ Future<void> _docsGenerate(List<String> args) async {
     }
 
     stdout.writeln('Folders to generate: ${foldersToGenerate.length}');
+    if (useLlm) {
+      stdout.writeln('Using: Anthropic Claude (agentic mode)');
+    } else {
+      stdout.writeln('Using: Stub generator (use --llm for real AI)');
+    }
+    stdout.writeln('');
+
     if (dryRun) {
-      stdout.writeln('');
       stdout.writeln('Dry run - would generate:');
       for (final folder in foldersToGenerate..sort()) {
         stdout.writeln('  - $folder');
@@ -1601,9 +1639,19 @@ Future<void> _docsGenerate(List<String> args) async {
     await sourceDir.create(recursive: true);
     await renderedDir.create(recursive: true);
 
-    // Generate docs in topological order
-    const generator = StubDocGenerator();
+    // Create generator
+    final generator = useLlm
+        ? _createAgenticGenerator(
+            apiKey: apiKey!,
+            index: index,
+            projectRoot: projectPath,
+            docsRoot: docsRoot,
+          )
+        : const StubDocGenerator();
+
     var generatedCount = 0;
+    var totalInputTokens = 0;
+    var totalOutputTokens = 0;
 
     for (final level in dirtyState.generationOrder) {
       for (final folder in level) {
@@ -1652,6 +1700,14 @@ Future<void> _docsGenerate(List<String> args) async {
         );
 
         generatedCount++;
+
+        // Track token usage for agentic generator
+        if (generator is DocGenerationAgent) {
+          final (input, output) = generator.tokenUsage;
+          totalInputTokens = input;
+          totalOutputTokens = output;
+        }
+
         stderr.writeln('✓');
       }
     }
@@ -1664,9 +1720,38 @@ Future<void> _docsGenerate(List<String> args) async {
     stdout.writeln('Source docs: $docsRoot/source/folders/');
     stdout.writeln('Rendered docs: $docsRoot/rendered/folders/');
     stdout.writeln('Manifest: $manifestPath');
+
+    if (useLlm && (totalInputTokens > 0 || totalOutputTokens > 0)) {
+      stdout.writeln('');
+      stdout.writeln('Token usage:');
+      stdout.writeln('  Input: $totalInputTokens');
+      stdout.writeln('  Output: $totalOutputTokens');
+      stdout.writeln('  Total: ${totalInputTokens + totalOutputTokens}');
+    }
   } finally {
     await context?.dispose();
   }
+}
+
+/// Create an agentic doc generator with LLM support.
+DocGenerationAgent _createAgenticGenerator({
+  required String apiKey,
+  required dynamic index, // ScipIndex
+  required String projectRoot,
+  required String docsRoot,
+}) {
+  final llmService = AnthropicService(apiKey: apiKey);
+  final toolRegistry = DocToolRegistry(
+    projectRoot: projectRoot,
+    scipIndex: index,
+    docsPath: docsRoot,
+  );
+
+  return DocGenerationAgent(
+    llmService: llmService,
+    toolRegistry: toolRegistry,
+    maxIterations: 10, // Allow up to 10 tool calls per folder
+  );
 }
 
 /// Re-resolve links in documentation.

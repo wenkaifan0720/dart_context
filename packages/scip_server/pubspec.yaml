@@ -20,6 +20,7 @@ dependencies:
   glob: ^2.1.0
   path: ^1.8.0
   crypto: ^3.0.0
+  http: ^1.2.0
 
 dev_dependencies:
   test: ^1.24.0

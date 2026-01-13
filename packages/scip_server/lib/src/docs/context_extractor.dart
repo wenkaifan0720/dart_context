@@ -368,6 +368,15 @@ class ContextExtractor {
     Set<String> externalDeps,
     Map<String, Set<String>> usedSymbols,
   ) {
+    // Skip local/anonymous symbols - they're implementation details
+    if (_isLocalOrAnonymous(calledSymbol.symbol)) return;
+
+    // Skip symbols with names that look like locals (e.g., "local 0")
+    if (calledSymbol.name.startsWith('local ')) return;
+
+    // Skip private symbols (start with _)
+    if (calledSymbol.name.startsWith('_')) return;
+
     if (calledSymbol.isExternal) {
       // External package
       final packageName = _extractPackageName(calledSymbol.symbol);

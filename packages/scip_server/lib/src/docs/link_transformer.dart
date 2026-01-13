@@ -155,7 +155,8 @@ class LinkTransformer {
     final symbols = index.findSymbols(escapedName);
     for (final sym in symbols) {
       // Check if the symbol is in the expected file
-      if (sym.file != null && parsed.path.contains(sym.file!.replaceAll('`', ''))) {
+      if (sym.file != null &&
+          parsed.path.contains(sym.file!.replaceAll('`', ''))) {
         final def = index.findDefinition(sym.symbol);
         if (def != null) {
           return _formatLink(
@@ -213,7 +214,7 @@ class LinkTransformer {
       case LinkStyle.relative:
         // Compute relative path from the doc file to the source file
         final sourceAbsPath = p.join(projectRoot ?? index.projectRoot, file);
-        
+
         // If docPath is provided, compute path relative to that doc
         if (docPath != null) {
           final docAbsPath = p.join(projectRoot ?? index.projectRoot, docPath);
@@ -221,7 +222,7 @@ class LinkTransformer {
           final relativePath = p.relative(sourceAbsPath, from: docDir);
           return '$relativePath#L$line';
         }
-        
+
         // Otherwise, compute from docsRoot (backward compat)
         final relativePath = p.relative(sourceAbsPath, from: docsRoot);
         return '$relativePath#L$line';

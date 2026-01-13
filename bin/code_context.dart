@@ -1619,17 +1619,19 @@ Future<void> _docsGenerate(List<String> args) async {
         : dirtyState.dirtyFolders.toList();
 
     if (foldersToGenerate.isEmpty) {
-      stdout.writeln('All documentation is up to date.');
-      return;
-    }
-
-    stdout.writeln('Folders to generate: ${foldersToGenerate.length}');
-    if (useLlm) {
-      stdout.writeln('Using: Anthropic Claude (agentic mode)');
+      stdout.writeln('No folders need regeneration.');
+      // Still re-resolve links in case line numbers changed
+      stdout.writeln('Re-resolving links...');
+      stdout.writeln('');
     } else {
-      stdout.writeln('Using: Stub generator (use --llm for real AI)');
+      stdout.writeln('Folders to generate: ${foldersToGenerate.length}');
+      if (useLlm) {
+        stdout.writeln('Using: Anthropic Claude (agentic mode)');
+      } else {
+        stdout.writeln('Using: Stub generator (use --llm for real AI)');
+      }
+      stdout.writeln('');
     }
-    stdout.writeln('');
 
     if (dryRun) {
       stdout.writeln('Dry run - would generate:');
@@ -1646,24 +1648,26 @@ Future<void> _docsGenerate(List<String> args) async {
     await sourceDir.create(recursive: true);
     await renderedDir.create(recursive: true);
 
-    // Create generator
-    final generator = useLlm
-        ? _createAgenticGenerator(
-            apiKey: apiKey!,
-            index: index,
-            projectRoot: projectPath,
-            docsRoot: docsRoot,
-            verbose: verbose,
-          )
-        : const StubDocGenerator();
-
     var generatedCount = 0;
     var totalInputTokens = 0;
     var totalOutputTokens = 0;
 
-    for (final level in dirtyState.generationOrder) {
-      for (final folder in level) {
-        if (!foldersToGenerate.contains(folder)) continue;
+    // STAGE 1: Generate docs for dirty folders only
+    if (foldersToGenerate.isNotEmpty) {
+      // Create generator
+      final generator = useLlm
+          ? _createAgenticGenerator(
+              apiKey: apiKey!,
+              index: index,
+              projectRoot: projectPath,
+              docsRoot: docsRoot,
+              verbose: verbose,
+            )
+          : const StubDocGenerator();
+
+      for (final level in dirtyState.generationOrder) {
+        for (final folder in level) {
+          if (!foldersToGenerate.contains(folder)) continue;
 
         stderr.write('Generating: $folder... ');
 
@@ -1679,25 +1683,10 @@ Future<void> _docsGenerate(List<String> args) async {
         // Generate doc
         final generatedDoc = await generator.generateFolderDoc(docContext);
 
-        // Write source doc
+        // Write source doc (link resolution happens later for all docs)
         final sourceFile = File('$docsRoot/source/folders/$folder/README.md');
         await sourceFile.parent.create(recursive: true);
         await sourceFile.writeAsString(generatedDoc.content);
-
-        // Transform links and write rendered doc
-        final transformer = LinkTransformer(
-          index: index,
-          docsRoot: docsRoot,
-          projectRoot: projectPath,
-        );
-        final renderedFilePath = '.dart_context/docs/rendered/folders/$folder/README.md';
-        final renderedContent = transformer.transform(
-          generatedDoc.content,
-          docPath: renderedFilePath,
-        );
-        final renderedFile = File('$docsRoot/rendered/folders/$folder/README.md');
-        await renderedFile.parent.create(recursive: true);
-        await renderedFile.writeAsString(renderedContent);
 
         // Update manifest
         final structureHash = StructureHash.computeFolderHash(index, folder);
@@ -1724,12 +1713,45 @@ Future<void> _docsGenerate(List<String> args) async {
         stderr.writeln('✓');
       }
     }
+    } // End of generation stage
 
     // Save manifest
     await manifest.save(manifestPath);
 
+    // STAGE 2: Re-resolve links for ALL docs (not just newly generated ones)
+    // This is cheap and ensures links point to current line numbers
+    stdout.writeln('');
+    stdout.writeln('Re-resolving links for all docs...');
+    final linkTransformer = LinkTransformer(
+      index: index,
+      docsRoot: docsRoot,
+      projectRoot: projectPath,
+    );
+
+    var resolvedCount = 0;
+    if (await sourceDir.exists()) {
+      await for (final entity in sourceDir.list(recursive: true)) {
+        if (entity is! File) continue;
+        if (!entity.path.endsWith('.md')) continue;
+
+        final relativePath = entity.path.substring(sourceDir.path.length);
+        final sourceContent = await entity.readAsString();
+        final renderedFilePath = '.dart_context/docs/rendered/folders$relativePath';
+        final renderedContent = linkTransformer.transform(
+          sourceContent,
+          docPath: renderedFilePath,
+        );
+
+        final renderedFile = File('${renderedDir.path}$relativePath');
+        await renderedFile.parent.create(recursive: true);
+        await renderedFile.writeAsString(renderedContent);
+        resolvedCount++;
+      }
+    }
+
     stdout.writeln('');
     stdout.writeln('Generated $generatedCount folder docs.');
+    stdout.writeln('Resolved $resolvedCount docs.');
     stdout.writeln('Source docs: $docsRoot/source/folders/');
     stdout.writeln('Rendered docs: $docsRoot/rendered/folders/');
     stdout.writeln('Manifest: $manifestPath');

@@ -62,8 +62,12 @@ class LinkTransformer {
   /// Matches:
   /// - `[label](scip://path/to/file/Symbol#member)`
   /// - `[label](scip://package@version/path/Symbol#)`
+  /// - `[label](scip://path/to/file/main().)` - handles () in symbol names
+  ///
+  /// SCIP URIs always end with `.` or `#`. We match greedily until
+  /// we see the final `.` or `#` before the closing `)`.
   static final _inlineLinkPattern = RegExp(
-    r'\[([^\]]+)\]\(scip://([^)]+)\)',
+    r'\[([^\]]+)\]\(scip://(.+[.#])\)',
     multiLine: true,
   );
 
@@ -150,8 +154,9 @@ class LinkTransformer {
 
     // Strategy 3: Search for symbol by name in the specified file
     // This handles simplified URIs like scip://lib/path/file.dart/SymbolName#
+    // Use baseSymbolName to strip SCIP descriptor suffixes (e.g., main() -> main)
     // Escape regex special characters in the symbol name
-    final escapedName = RegExp.escape(parsed.symbolName);
+    final escapedName = RegExp.escape(parsed.baseSymbolName);
     final symbols = index.findSymbols(escapedName);
     for (final sym in symbols) {
       // Check if the symbol is in the expected file
@@ -381,6 +386,32 @@ class ScipUri {
     }
 
     return buffer.toString();
+  }
+
+  /// Get the base symbol name without SCIP descriptor suffix.
+  ///
+  /// SCIP uses suffixes like `().` for functions, `#` for types.
+  /// This returns just the identifier name for searching.
+  ///
+  /// Examples:
+  /// - `main().` -> `main`
+  /// - `AuthService#` -> `AuthService`
+  /// - `login().` -> `login`
+  String get baseSymbolName {
+    var name = symbolName;
+    // Remove trailing dot first (e.g., main(). -> main())
+    if (name.endsWith('.')) {
+      name = name.substring(0, name.length - 1);
+    }
+    // Remove function descriptor suffix: main() -> main
+    if (name.endsWith('()')) {
+      name = name.substring(0, name.length - 2);
+    }
+    // Remove type descriptor suffix: AuthService# -> AuthService
+    if (name.endsWith('#')) {
+      name = name.substring(0, name.length - 1);
+    }
+    return name;
   }
 
   @override

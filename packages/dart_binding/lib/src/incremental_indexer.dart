@@ -10,11 +10,8 @@ import 'package:crypto/crypto.dart';
 import 'package:package_config/package_config.dart';
 import 'package:path/path.dart' as p;
 import 'package:pubspec_parse/pubspec_parse.dart';
-// ignore: implementation_imports
-import 'package:scip_dart/src/gen/scip.pb.dart' as scip;
-// ignore: implementation_imports
-import 'package:scip_dart/src/scip_visitor.dart';
-
+import 'package:scip_dart/scip_dart.dart' as scip_dart;
+import 'package:scip_dart/scip_dart.dart' as scip;
 import 'package:scip_server/scip_server.dart';
 
 import 'adapters/analyzer_adapter.dart';
@@ -413,7 +410,7 @@ class IncrementalScipIndexer {
 
       // Generate SCIP document using scip-dart's visitor
       final relativePath = p.relative(filePath, from: _projectRoot);
-      final visitor = ScipVisitor(
+      final visitor = scip_dart.ScipVisitor(
         relativePath,
         _projectRoot,
         result.lineInfo,
@@ -560,7 +557,7 @@ class IncrementalScipIndexer {
 
     try {
       final relativePath = p.relative(filePath, from: _projectRoot);
-      final visitor = ScipVisitor(
+      final visitor = scip_dart.ScipVisitor(
         relativePath,
         _projectRoot,
         result.lineInfo,

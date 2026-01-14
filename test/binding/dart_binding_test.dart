@@ -1,6 +1,6 @@
 import 'dart:io';
 
-import 'package:dart_context/dart_context.dart';
+import 'package:code_context/code_context.dart';
 import 'package:test/test.dart';
 
 void main() {

@@ -6,7 +6,7 @@ import 'package:dart_mcp/server.dart';
 import 'package:stream_channel/stream_channel.dart';
 import 'package:test/test.dart';
 
-import 'package:dart_context/dart_context_mcp.dart';
+import 'package:code_context/code_context_mcp.dart';
 
 void main() {
   group('MCP Integration', () {
@@ -345,9 +345,9 @@ base class TestMCPClient extends MCPClient with RootsSupport {
       : super(Implementation(name: 'test_client', version: '1.0.0'));
 }
 
-/// Test MCP server with DartContextSupport.
+/// Test MCP server with CodeContextSupport.
 base class TestDartContextServer extends MCPServer
-    with LoggingSupport, ToolsSupport, RootsTrackingSupport, DartContextSupport {
+    with LoggingSupport, ToolsSupport, RootsTrackingSupport, CodeContextSupport {
   TestDartContextServer(super.channel)
       : super.fromStreamChannel(
           implementation: Implementation(

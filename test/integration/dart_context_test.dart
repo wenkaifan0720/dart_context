@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:dart_context/dart_context.dart';
+import 'package:code_context/code_context.dart';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 
@@ -27,10 +27,10 @@ void main() {
     });
 
     test('open creates context and indexes project', () async {
-      final context = await DartContext.open(projectPath, watch: false);
+      final context = await CodeContext.open(projectPath, watch: false);
 
       try {
-        expect(context.projectRoot, projectPath);
+        expect(context.rootPath, projectPath);
         expect(context.stats['files'], greaterThan(0));
         expect(context.stats['symbols'], greaterThan(0));
       } finally {
@@ -39,10 +39,10 @@ void main() {
     });
 
     group('query DSL end-to-end', () {
-      late DartContext context;
+      late CodeContext context;
 
       setUpAll(() async {
-        context = await DartContext.open(projectPath, watch: false);
+        context = await CodeContext.open(projectPath, watch: false);
       });
 
       tearDownAll(() async {
@@ -182,10 +182,10 @@ void main() {
     });
 
     group('JSON output', () {
-      late DartContext context;
+      late CodeContext context;
 
       setUpAll(() async {
-        context = await DartContext.open(projectPath, watch: false);
+        context = await CodeContext.open(projectPath, watch: false);
       });
 
       tearDownAll(() async {
@@ -261,10 +261,10 @@ void main() {
     });
 
     group('index access', () {
-      late DartContext context;
+      late CodeContext context;
 
       setUpAll(() async {
-        context = await DartContext.open(projectPath, watch: false);
+        context = await CodeContext.open(projectPath, watch: false);
       });
 
       tearDownAll(() async {

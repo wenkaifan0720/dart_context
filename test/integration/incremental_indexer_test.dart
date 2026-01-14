@@ -1,6 +1,6 @@
 import 'dart:io';
 
-import 'package:dart_context/dart_context.dart';
+import 'package:code_context/code_context.dart';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 
@@ -26,7 +26,7 @@ void main() {
     });
 
     test('indexes a simple Dart project', () async {
-      final context = await DartContext.open(projectPath, watch: false);
+      final context = await CodeContext.open(projectPath, watch: false);
 
       try {
         expect(context.stats['files'], greaterThan(0));
@@ -37,7 +37,7 @@ void main() {
     });
 
     test('finds class definitions', () async {
-      final context = await DartContext.open(projectPath, watch: false);
+      final context = await CodeContext.open(projectPath, watch: false);
 
       try {
         final result = await context.query('find * kind:class');
@@ -54,7 +54,7 @@ void main() {
     });
 
     test('finds function definitions', () async {
-      final context = await DartContext.open(projectPath, watch: false);
+      final context = await CodeContext.open(projectPath, watch: false);
 
       try {
         final result = await context.query('find * kind:function');
@@ -71,7 +71,7 @@ void main() {
     });
 
     test('finds method definitions', () async {
-      final context = await DartContext.open(projectPath, watch: false);
+      final context = await CodeContext.open(projectPath, watch: false);
 
       try {
         final result = await context.query('find greet kind:method');
@@ -85,7 +85,7 @@ void main() {
     });
 
     test('finds references', () async {
-      final context = await DartContext.open(projectPath, watch: false);
+      final context = await CodeContext.open(projectPath, watch: false);
 
       try {
         // First check that Greeter exists
@@ -107,7 +107,7 @@ void main() {
     });
 
     test('finds definitions with source code', () async {
-      final context = await DartContext.open(projectPath, watch: false);
+      final context = await CodeContext.open(projectPath, watch: false);
 
       try {
         final result = await context.query('def Calculator');
@@ -126,7 +126,7 @@ void main() {
     });
 
     test('lists all files', () async {
-      final context = await DartContext.open(projectPath, watch: false);
+      final context = await CodeContext.open(projectPath, watch: false);
 
       try {
         final result = await context.query('files');
@@ -148,7 +148,7 @@ void main() {
     });
 
     test('returns stats', () async {
-      final context = await DartContext.open(projectPath, watch: false);
+      final context = await CodeContext.open(projectPath, watch: false);
 
       try {
         final result = await context.query('stats');
@@ -163,7 +163,7 @@ void main() {
     });
 
     test('handles not found gracefully', () async {
-      final context = await DartContext.open(projectPath, watch: false);
+      final context = await CodeContext.open(projectPath, watch: false);
 
       try {
         final result = await context.query('def NonExistentClass');
@@ -174,7 +174,7 @@ void main() {
     });
 
     test('filters by path', () async {
-      final context = await DartContext.open(projectPath, watch: false);
+      final context = await CodeContext.open(projectPath, watch: false);
 
       try {
         final result = await context.query('find * in:lib/');
@@ -192,7 +192,7 @@ void main() {
 
     group('file watching', () {
       test('detects new file', () async {
-        final context = await DartContext.open(projectPath, watch: true);
+        final context = await CodeContext.open(projectPath, watch: true);
 
         try {
           // Listen for updates
@@ -227,7 +227,7 @@ class NewClass {
       });
 
       test('detects file modification', () async {
-        final context = await DartContext.open(projectPath, watch: true);
+        final context = await CodeContext.open(projectPath, watch: true);
 
         try {
           // Verify initial state
@@ -258,7 +258,7 @@ class UpdatedClass {
       });
 
       test('detects file deletion', () async {
-        final context = await DartContext.open(projectPath, watch: true);
+        final context = await CodeContext.open(projectPath, watch: true);
 
         try {
           // Create and index a file
@@ -285,7 +285,7 @@ class UpdatedClass {
 
     group('refresh', () {
       test('refreshFile updates single file', () async {
-        final context = await DartContext.open(projectPath, watch: false);
+        final context = await CodeContext.open(projectPath, watch: false);
 
         try {
           final initialStats = context.stats['symbols'];
@@ -315,7 +315,7 @@ class RefreshTestClass {}
       });
 
       test('refreshAll reindexes everything', () async {
-        final context = await DartContext.open(projectPath, watch: false);
+        final context = await CodeContext.open(projectPath, watch: false);
 
         try {
           final initialSymbols = context.stats['symbols'];
@@ -348,7 +348,7 @@ class RefreshAllTest {
         try {
           // New architecture may throw StateError or return empty context
           try {
-            final context = await DartContext.open(invalidDir.path);
+            final context = await CodeContext.open(invalidDir.path);
             // If it succeeds, should have 0 packages
             expect(context.packageCount, equals(0));
             await context.dispose();
@@ -376,7 +376,7 @@ environment:
           // The IncrementalScipIndexer handles missing package_config internally
           // Either throws or opens with empty/limited index
           try {
-            final context = await DartContext.open(invalidDir.path);
+            final context = await CodeContext.open(invalidDir.path);
             // If it opens, it should have the package discovered
             expect(context.packageCount, greaterThanOrEqualTo(0));
             await context.dispose();

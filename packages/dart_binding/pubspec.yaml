@@ -8,11 +8,12 @@ environment:
 resolution: workspace
 
 dependencies:
-  # Workspace dependency
+  # Workspace dependencies
   scip_server:
+  scip_dart:
+    path: ../scip_dart
   
-  # SCIP protobuf bindings and visitor
-  scip_dart: ^1.6.2
+  # SCIP protobuf bindings
   protobuf: ^3.1.0
   
   # Dart analyzer for incremental analysis
@@ -21,6 +22,7 @@ dependencies:
   # Package resolution
   package_config: ^2.1.0
   pubspec_parse: ^1.2.0
+  pub_semver: ^2.0.0
   
   # Utilities
   path: ^1.8.0

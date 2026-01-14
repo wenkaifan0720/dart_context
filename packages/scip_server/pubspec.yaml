@@ -8,8 +8,9 @@ environment:
 resolution: workspace
 
 dependencies:
-  # SCIP protobuf bindings
-  scip_dart: ^1.6.2
+  # SCIP protobuf bindings (local fork)
+  scip_dart:
+    path: ../scip_dart
   protobuf: ^3.1.0
   
   # Utilities

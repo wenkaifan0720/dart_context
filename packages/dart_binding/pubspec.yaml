@@ -1,6 +1,7 @@
 name: dart_binding
 description: Dart language binding for scip_server - incremental indexing and package discovery.
 version: 0.1.0
+publish_to: none
 
 environment:
   sdk: ^3.5.0

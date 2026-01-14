@@ -5,20 +5,15 @@ import 'package:analyzer/dart/analysis/analysis_context_collection.dart';
 import 'package:analyzer/dart/analysis/results.dart';
 import 'package:package_config/package_config.dart';
 // Implementation import needed for constructing an empty PackageConfig.
+// ignore: implementation_imports
 import 'package:package_config/src/package_config_impl.dart'
     show SimplePackageConfig;
 import 'package:path/path.dart' as p;
 import 'package:pubspec_parse/pubspec_parse.dart';
 import 'package:pub_semver/pub_semver.dart';
-import 'package:scip_server/scip_server.dart';
-// ignore: implementation_imports
 import 'package:scip_dart/scip_dart.dart' as scip_dart;
-// ignore: implementation_imports
-import 'package:scip_dart/src/gen/scip.pb.dart' as scip;
-// ignore: implementation_imports
-import 'package:scip_dart/src/scip_visitor.dart';
-// ignore: implementation_imports
-import 'package:scip_dart/src/version.dart';
+import 'package:scip_dart/scip_dart.dart' as scip;
+import 'package:scip_server/scip_server.dart';
 
 import 'package_registry.dart';
 import 'utils/pubspec_utils.dart';
@@ -136,12 +131,12 @@ class ExternalIndexBuilder {
       textDocumentEncoding: scip.TextEncoding.UTF8,
       toolInfo: scip.ToolInfo(
         name: 'scip-dart',
-        version: scipDartVersion,
+        version: scip_dart.scipDartVersion,
         arguments: const [],
       ),
     );
 
-    globalExternalSymbols.clear();
+    scip_dart.globalExternalSymbols.clear();
 
     // Let the analyzer discover all SDK files (including part files).
     final collection = AnalysisContextCollection(
@@ -161,7 +156,7 @@ class ExternalIndexBuilder {
         resolvedUnits.whereType<ResolvedUnitResult>().map((resUnit) {
       final relativePath = p.relative(resUnit.path, from: sdkPath);
 
-      final visitor = ScipVisitor(
+      final visitor = scip_dart.ScipVisitor(
         relativePath,
         sdkPath,
         resUnit.lineInfo,
@@ -182,7 +177,7 @@ class ExternalIndexBuilder {
     return scip.Index(
       metadata: metadata,
       documents: documents,
-      externalSymbols: globalExternalSymbols,
+      externalSymbols: scip_dart.globalExternalSymbols,
     );
   }
 
@@ -299,7 +294,7 @@ class ExternalIndexBuilder {
   /// package root.
   Future<scip.Index?> _indexDirectory(String path) async {
     // Clear global state from previous indexing runs to prevent accumulation
-    globalExternalSymbols.clear();
+    scip_dart.globalExternalSymbols.clear();
 
     // Ensure we have an absolute path
     final absPath = Directory(path).absolute.path;
@@ -347,7 +342,7 @@ class ExternalIndexBuilder {
       textDocumentEncoding: scip.TextEncoding.UTF8,
       toolInfo: scip.ToolInfo(
         name: 'scip-dart',
-        version: scipDartVersion,
+        version: scip_dart.scipDartVersion,
         arguments: [],
       ),
     );
@@ -380,7 +375,7 @@ class ExternalIndexBuilder {
       // Make path relative to package root (not lib)
       final relativePath = p.relative(resUnit.path, from: dirPath);
 
-      final visitor = ScipVisitor(
+      final visitor = scip_dart.ScipVisitor(
         relativePath,
         dirPath,
         resUnit.lineInfo,
@@ -401,7 +396,7 @@ class ExternalIndexBuilder {
     return scip.Index(
       metadata: metadata,
       documents: documents,
-      externalSymbols: globalExternalSymbols,
+      externalSymbols: scip_dart.globalExternalSymbols,
     );
   }
 

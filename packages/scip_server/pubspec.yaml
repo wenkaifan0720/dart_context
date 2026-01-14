@@ -1,6 +1,7 @@
 name: scip_server
 description: Language-agnostic SCIP query engine and protocol server.
 version: 0.1.0
+publish_to: none
 
 environment:
   sdk: ^3.5.0

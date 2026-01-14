@@ -61,7 +61,12 @@ base mixin CodeContextSupport on ToolsSupport, RootsTrackingSupport {
       return result;
     }
 
-    // Register Dart tools
+    // Register available language bindings for auto-detection
+    CodeContext.registerBinding(DartBinding());
+    // Future: CodeContext.registerBinding(TypeScriptBinding());
+    // Future: CodeContext.registerBinding(PythonBinding());
+
+    // Register Dart-specific tools
     registerTool(dartQueryTool, _handleDartQuery);
     registerTool(dartIndexFlutterTool, _handleIndexFlutter);
     registerTool(dartIndexDepsTool, _handleIndexDeps);
@@ -175,10 +180,9 @@ base mixin CodeContextSupport on ToolsSupport, RootsTrackingSupport {
         // Create a new context
         try {
           log(LoggingLevel.info, 'Creating CodeContext for: ${root.uri}');
-          // Use DartBinding explicitly for Dart projects
+          // Auto-detect language from project files
           final context = await CodeContext.open(
             rootPath,
-            binding: DartBinding(),
             watch: true,
             useCache: useCache,
             loadDependencies: true, // Always try to load deps
@@ -230,10 +234,9 @@ base mixin CodeContextSupport on ToolsSupport, RootsTrackingSupport {
 
     try {
       log(LoggingLevel.info, 'Creating CodeContext for: ${firstRoot.uri}');
-      // Use DartBinding explicitly for Dart projects
+      // Auto-detect language from project files
       final context = await CodeContext.open(
         rootPath,
-        binding: DartBinding(),
         watch: true,
         useCache: useCache,
         loadDependencies: true, // Always try to load deps
@@ -284,7 +287,7 @@ base mixin CodeContextSupport on ToolsSupport, RootsTrackingSupport {
         content: [
           TextContent(
             text:
-                'No Dart project found. Make sure roots are set and contain a pubspec.yaml.',
+                'No project found. Make sure roots are set and contain a supported project file (e.g., pubspec.yaml for Dart).',
           ),
         ],
         isError: true,

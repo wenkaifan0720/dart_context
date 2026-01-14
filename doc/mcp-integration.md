@@ -47,12 +47,13 @@ base class MyServer extends MCPServer
 }
 ```
 
-The tools automatically:
-- Index project roots on first query
-- Cache indexes for fast subsequent queries  
-- Watch for file changes and update incrementally
-- Load pre-computed SDK/package indexes
-- Watch package_config.json and notify when deps change
+The mixin automatically:
+- Registers `DartBinding()` for Dart project auto-detection
+- Indexes project roots on first query
+- Caches indexes for fast subsequent queries  
+- Watches for file changes and updates incrementally
+- Loads pre-computed SDK/package indexes
+- Watches package_config.json and notifies when deps change
 
 ## Tool Details
 
@@ -64,6 +65,7 @@ Execute any DSL query:
 dart_query("refs AuthService.login")
 dart_query("find Auth* kind:class")
 dart_query("grep TODO -l")
+dart_query("find String kind:class lang:Dart")
 ```
 
 Returns formatted text or JSON depending on query type.
@@ -78,7 +80,8 @@ Shows current index state:
   "symbols": 1234,
   "references": 5678,
   "packages": ["my_app", "my_core"],
-  "externalLoaded": ["flutter-3.32.0", "collection-1.18.0"]
+  "externalLoaded": ["flutter-3.32.0", "collection-1.18.0"],
+  "sdkLoaded": "3.7.1"
 }
 ```
 
@@ -116,3 +119,12 @@ Use when:
 - Major refactoring
 - Index seems stale
 
+## Multi-Language Support
+
+The MCP server uses auto-detection to select the appropriate language binding:
+
+1. On initialization, bindings are registered (currently `DartBinding`)
+2. When a project root is set, `CodeContext.open()` auto-detects the language
+3. The correct binding is used based on project files (`pubspec.yaml` -> Dart)
+
+Future language bindings (TypeScript, Python) will work the same way - just register them at startup and auto-detection handles the rest.

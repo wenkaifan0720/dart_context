@@ -90,17 +90,31 @@ analyzer.onFileDartAnalysisCompleted = (filePath, result) {
 The `AnalyzerAdapter` interface requires:
 
 ```dart
-abstract class AnalyzerAdapter {
+abstract interface class AnalyzerAdapter {
   /// Project root path
   String get projectRoot;
   
   /// Get a resolved unit for a file
   Future<ResolvedUnitResult?> getResolvedUnit(String path);
   
-  /// Stream of file change events
-  Stream<FileChange> get fileChanges;
+  /// Stream of file change events (optional)
+  Stream<FileChange>? get fileChanges;
+  
+  /// Notify analyzer of file changes (optional)
+  Future<void> notifyFileChange(String filePath);
+  
+  /// List all Dart files (optional, falls back to filesystem scan)
+  Future<List<String>>? listDartFiles();
 }
 ```
+
+## Available Adapters
+
+| Adapter | Use Case |
+|---------|----------|
+| `AnalyzerAdapter` | Base interface - implement for custom analyzers |
+| `DefaultAnalyzerAdapter` | Wraps `AnalysisContextCollection` |
+| `HologramAnalyzerAdapter` | Ready-to-use for Hologram/Fluxon integration |
 
 ## Benefits
 
@@ -108,4 +122,3 @@ abstract class AnalyzerAdapter {
 - **Unified file watching**: Reuse your existing file watcher
 - **Incremental updates**: Index updates automatically when files change
 - **Memory efficient**: Single analyzer instance serves multiple purposes
-

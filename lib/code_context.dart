@@ -54,7 +54,6 @@ library;
 
 // Main entry point
 export 'src/code_context.dart';
-export 'src/root_watcher.dart' show RootWatcher;
 
 // Re-export scip_server package (language-agnostic core)
 export 'package:scip_server/scip_server.dart'

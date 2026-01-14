@@ -1,9 +1,9 @@
 // Copyright (c) 2025. Code intelligence MCP server.
-/// 
+///
 /// This server provides semantic code intelligence via MCP.
-/// 
+///
 /// ## Usage with Cursor
-/// 
+///
 /// Add to ~/.cursor/mcp.json:
 /// ```json
 /// {
@@ -15,9 +15,9 @@
 ///   }
 /// }
 /// ```
-/// 
+///
 /// ## Available Tools
-/// 
+///
 /// - `dart_query` - Query Dart codebase with DSL
 /// - `dart_index_flutter` - Index Flutter SDK packages
 /// - `dart_index_deps` - Index pub dependencies
@@ -38,14 +38,18 @@ void main() {
 
 /// MCP server with code intelligence support.
 base class CodeContextServer extends MCPServer
-    with LoggingSupport, ToolsSupport, RootsTrackingSupport, DartContextSupport {
+    with
+        LoggingSupport,
+        ToolsSupport,
+        RootsTrackingSupport,
+        CodeContextSupport {
   CodeContextServer(super.channel)
       : super.fromStreamChannel(
           implementation: Implementation(
             name: 'code_context',
             version: '1.0.0',
           ),
-          instructions: '''Dart code intelligence server.
+          instructions: '''Code intelligence server.
 
 Use dart_status to check index status.
 Use dart_index_flutter to index Flutter SDK (one-time setup).
@@ -60,4 +64,3 @@ Example queries:
 ''',
         );
 }
-

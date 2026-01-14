@@ -1,181 +1,202 @@
-import 'dart:async';
+import 'dart:io';
 
-import 'package:dart_binding/dart_binding.dart'
-    hide IndexUpdate, InitialIndexUpdate, FileUpdatedUpdate, FileRemovedUpdate, IndexErrorUpdate;
-import 'package:scip_server/scip_server.dart'
-    hide IndexUpdate, InitialIndexUpdate, FileUpdatedUpdate, FileRemovedUpdate, IndexErrorUpdate;
+import 'package:scip_server/scip_server.dart';
 
-// Use dart_binding's IndexUpdate types (they have more info)
-import 'package:dart_binding/dart_binding.dart' show IndexUpdate;
-
-import 'root_watcher.dart';
-
-/// Lightweight semantic code intelligence.
+/// Language-agnostic semantic code intelligence.
 ///
 /// Provides incremental indexing and a query DSL for navigating
-/// codebases.
+/// codebases in any supported language.
 ///
 /// ## Usage
 ///
 /// ```dart
+/// // Auto-detect language from project files
 /// final context = await CodeContext.open('/path/to/project');
+///
+/// // Or specify a language binding explicitly
+/// final context = await CodeContext.open(
+///   '/path/to/project',
+///   binding: DartBinding(),
+/// );
 ///
 /// // Query with DSL
 /// final result = await context.query('def AuthRepository');
 /// print(result.toText());
 ///
-/// // Watch for updates
-/// context.updates.listen((update) {
-///   print('Index updated: $update');
-/// });
+/// // Load dependencies for cross-package queries
+/// await context.loadDependencies();
+///
+/// // Query with full dependency support
+/// final hierarchy = await context.query('hierarchy MyWidget');
 ///
 /// // Cleanup
 /// await context.dispose();
 /// ```
 ///
-/// ## Works with any folder structure
+/// ## Supported Languages
 ///
-/// The unified architecture works for:
-/// - Single packages
-/// - Melos mono repos
-/// - Dart pub workspaces
-/// - Any folder with multiple packages
+/// - Dart (via `DartBinding` from `dart_binding` package)
+/// - More languages coming soon...
 class CodeContext {
   CodeContext._({
-    required this.rootPath,
-    required PackageRegistry registry,
+    required LanguageContext languageContext,
     required QueryExecutor executor,
-    RootWatcher? watcher,
-    DiscoveryResult? discovery,
-  })  : _registry = registry,
-        _executor = executor,
-        _watcher = watcher,
-        _discovery = discovery;
+  })  : _context = languageContext,
+        _executor = executor;
 
-  /// The root path for this context.
-  final String rootPath;
+  final LanguageContext _context;
+  final QueryExecutor _executor;
 
-  /// Alias for [rootPath] for backward compatibility.
-  @Deprecated('Use rootPath instead')
-  String get projectRoot => rootPath;
+  // Registered language bindings for auto-detection
+  static final List<LanguageBinding> _registeredBindings = [];
 
-  /// Primary index for direct programmatic queries.
+  /// Register a language binding for auto-detection.
   ///
-  /// Returns the first local package's index, or an empty index if none.
-  /// For multi-package workspaces, consider using [registry] directly.
-  ScipIndex get index {
-    final packages = _registry.localPackages.values.toList();
-    if (packages.isEmpty) return ScipIndex.empty(projectRoot: rootPath);
-    return packages.first.indexer.index;
+  /// Call this at startup to enable auto-detection of languages:
+  /// ```dart
+  /// CodeContext.registerBinding(DartBinding());
+  /// CodeContext.registerBinding(TypeScriptBinding());
+  /// ```
+  static void registerBinding(LanguageBinding binding) {
+    if (!_registeredBindings.any((b) => b.languageId == binding.languageId)) {
+      _registeredBindings.add(binding);
+    }
   }
 
-  final PackageRegistry _registry;
-  final QueryExecutor _executor;
-  final RootWatcher? _watcher;
-  final DiscoveryResult? _discovery;
+  /// Get all registered language bindings.
+  static List<LanguageBinding> get registeredBindings =>
+      List.unmodifiable(_registeredBindings);
 
-  /// Open a project or workspace.
+  /// Open a project with optional language binding.
+  ///
+  /// If no [binding] is provided, attempts to auto-detect the language
+  /// by looking for package manifest files (pubspec.yaml, package.json, etc.)
+  /// in registered bindings.
   ///
   /// This will:
-  /// 1. Recursively discover all packages in the path
-  /// 2. Create indexers for each package
-  /// 3. Load from cache (if valid and [useCache] is true)
-  /// 4. Start file watching (if [watch] is true)
-  /// 5. Load pre-indexed dependencies (if [loadDependencies] is true)
-  ///
-  /// Works for any folder structure:
-  /// - Single packages
-  /// - Melos mono repos
-  /// - Dart pub workspaces
-  /// - Any folder with multiple packages
+  /// 1. Detect or use the specified language binding
+  /// 2. Discover all packages in the path
+  /// 3. Create indexers for each package
+  /// 4. Load from cache (if valid and [useCache] is true)
+  /// 5. Start file watching (if [watch] is true)
   ///
   /// Example:
   /// ```dart
-  /// // Open a single package
-  /// final context = await CodeContext.open('/path/to/package');
+  /// // Auto-detect language
+  /// final context = await CodeContext.open('/path/to/project');
   ///
-  /// // Open a mono repo with cross-package queries
+  /// // Explicitly specify language
   /// final context = await CodeContext.open(
-  ///   '/path/to/monorepo',
-  ///   loadDependencies: true,
+  ///   '/path/to/project',
+  ///   binding: DartBinding(),
   /// );
   /// ```
   static Future<CodeContext> open(
     String projectPath, {
+    LanguageBinding? binding,
     bool watch = true,
     bool useCache = true,
     bool loadDependencies = false,
     void Function(String message)? onProgress,
   }) async {
-    // 1. Discover all packages
-    onProgress?.call('Discovering packages...');
-    final packageDiscovery = PackageDiscovery();
-    final discovery = await packageDiscovery.discoverPackages(projectPath);
+    final normalizedPath = Directory(projectPath).absolute.path;
 
-    // 2. Create registry
-    final registry = PackageRegistry(rootPath: discovery.rootPath);
+    // 1. Detect or use specified binding
+    final detectedBinding = binding ?? await _detectLanguage(normalizedPath);
+    if (detectedBinding == null) {
+      throw StateError(
+        'Could not detect project language. '
+        'Register a binding with CodeContext.registerBinding() or specify one explicitly.',
+      );
+    }
 
-    // 3. Initialize local packages
-    await registry.initializeLocalPackages(
-      discovery.packages,
+    onProgress?.call('Using ${detectedBinding.languageId} binding...');
+
+    // 2. Create language context
+    final languageContext = await detectedBinding.createContext(
+      normalizedPath,
       useCache: useCache,
+      watch: watch,
       onProgress: onProgress,
     );
 
-    // 4. Load external dependencies if requested
-    if (loadDependencies) {
+    // 3. Load dependencies if requested
+    if (loadDependencies && detectedBinding.supportsDependencies) {
       onProgress?.call('Loading dependencies...');
-      await registry.loadAllDependencies();
+      await languageContext.loadDependencies();
     }
 
-    // 5. Start unified watcher
-    RootWatcher? watcher;
-    if (watch) {
-      watcher = RootWatcher(
-        rootPath: discovery.rootPath,
-        registry: registry,
-      );
-      await watcher.start();
-    }
-
-    // 6. Create executor with provider for cross-package queries
-    final provider = PackageRegistryProvider(registry);
+    // 4. Create query executor with provider for cross-package queries
     final executor = QueryExecutor(
-      registry.projectIndex,
-      provider: provider,
+      languageContext.index,
+      provider: languageContext.provider,
     );
 
     onProgress?.call('Ready');
 
     return CodeContext._(
-      rootPath: discovery.rootPath,
-      registry: registry,
+      languageContext: languageContext,
       executor: executor,
-      watcher: watcher,
-      discovery: discovery,
     );
   }
 
-  /// The package registry for this context.
-  PackageRegistry get registry => _registry;
+  /// Auto-detect language from project files.
+  static Future<LanguageBinding?> _detectLanguage(String path) async {
+    for (final binding in _registeredBindings) {
+      final packageFile = File('$path/${binding.packageFile}');
+      if (await packageFile.exists()) {
+        return binding;
+      }
+
+      // Also check subdirectories for monorepos
+      final dir = Directory(path);
+      await for (final entity in dir.list(recursive: true)) {
+        if (entity is File && entity.path.endsWith(binding.packageFile)) {
+          return binding;
+        }
+      }
+    }
+    return null;
+  }
+
+  /// The language binding used for this context.
+  LanguageBinding get binding {
+    // Get from registered bindings based on context
+    return _registeredBindings.firstWhere(
+      (b) => b.languageId == languageId,
+      orElse: () => throw StateError('No binding found for $languageId'),
+    );
+  }
+
+  /// The language identifier (e.g., "dart", "typescript").
+  String get languageId {
+    // Infer from provider or default to first registered
+    if (_registeredBindings.isNotEmpty) {
+      return _registeredBindings.first.languageId;
+    }
+    return 'unknown';
+  }
+
+  /// The root path for this context.
+  String get rootPath => _context.rootPath;
+
+  /// The underlying language context.
+  LanguageContext get context => _context;
+
+  /// Primary index for direct programmatic queries.
+  ScipIndex get index => _context.index;
+
+  /// Provider for cross-package queries.
+  IndexProvider? get provider => _context.provider;
 
   /// All discovered packages.
-  List<LocalPackage> get packages => _discovery?.packages ?? [];
+  List<DiscoveredPackage> get packages => _context.packages;
 
-  /// Number of local packages.
-  int get packageCount => _registry.localPackages.length;
+  /// Number of packages.
+  int get packageCount => _context.packageCount;
 
-  /// Stream of index updates from all local packages.
-  ///
-  /// Combines update streams from all package indexers.
-  Stream<IndexUpdate> get updates {
-    final streams = _registry.localPackages.values
-        .map((pkg) => pkg.indexer.updates)
-        .toList();
-    if (streams.isEmpty) return const Stream.empty();
-    if (streams.length == 1) return streams.first;
-    return streams.reduce((a, b) => a.merge(b));
-  }
+  /// Stream of index updates from all packages.
+  Stream<IndexUpdate> get updates => _context.updates;
 
   /// Execute a query using the DSL.
   ///
@@ -208,67 +229,32 @@ class CodeContext {
   }
 
   /// Manually refresh a specific file.
-  ///
-  /// Routes the file to the correct package indexer.
-  Future<bool> refreshFile(String filePath) async {
-    final pkg = _registry.findPackageForPath(filePath);
-    if (pkg == null) return false;
-    return pkg.indexer.refreshFile(filePath);
+  Future<bool> refreshFile(String filePath) {
+    return _context.refreshFile(filePath);
   }
 
   /// Manually refresh all files in all packages.
-  Future<void> refreshAll() async {
-    for (final pkg in _registry.localPackages.values) {
-      await pkg.indexer.refreshAll();
-    }
+  Future<void> refreshAll() {
+    return _context.refreshAll();
   }
 
   /// Get combined index statistics.
-  Map<String, dynamic> get stats => _registry.stats;
+  Map<String, dynamic> get stats => _context.stats;
 
   /// Whether external dependencies are loaded.
-  bool get hasDependencies =>
-      _registry.sdkIndex != null ||
-      _registry.hostedPackages.isNotEmpty ||
-      _registry.flutterPackages.isNotEmpty;
+  bool get hasDependencies => _context.hasDependencies;
 
-  /// Load pre-indexed dependencies for cross-package queries.
+  /// Load external dependencies for cross-package queries.
   ///
-  /// Call this to enable cross-package queries after opening a context
-  /// without the [loadDependencies] option:
-  ///
-  /// ```dart
-  /// final context = await CodeContext.open('/path/to/project');
-  /// await context.loadDependencies(); // Enable later
-  /// ```
-  Future<DependencyLoadResult> loadDependencies() async {
-    return _registry.loadAllDependencies();
-  }
-
-  /// Find which local package owns a file path.
-  LocalPackageIndex? findPackageForPath(String filePath) {
-    return _registry.findPackageForPath(filePath);
+  /// For Dart: loads SDK, Flutter, and pub.dev package indexes.
+  Future<void> loadDependencies() {
+    return _context.loadDependencies();
   }
 
   /// Dispose of resources.
   ///
   /// Stops file watching and cleans up all indexers.
-  Future<void> dispose() async {
-    await _watcher?.stop();
-    _registry.dispose();
-  }
-}
-
-/// Alias for backward compatibility.
-@Deprecated('Use CodeContext instead')
-typedef DartContext = CodeContext;
-
-/// Extension to merge streams.
-extension _StreamMerge<T> on Stream<T> {
-  Stream<T> merge(Stream<T> other) {
-    final controller = StreamController<T>.broadcast();
-    listen(controller.add, onError: controller.addError);
-    other.listen(controller.add, onError: controller.addError);
-    return controller.stream;
+  Future<void> dispose() {
+    return _context.dispose();
   }
 }

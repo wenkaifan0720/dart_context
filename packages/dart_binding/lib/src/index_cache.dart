@@ -10,7 +10,8 @@ import 'package:scip_dart/src/gen/scip.pb.dart' as scip;
 
 /// Manages caching of SCIP indexes to disk.
 ///
-/// Cache is stored in `.dart_context/` directory within the project:
+/// Cache is stored in `.dart_context/` directory within each package,
+/// following the `.dart_tool` convention for per-package tool data:
 /// - `index.scip` - The SCIP protobuf index
 /// - `manifest.json` - File hashes and metadata for cache validation
 class IndexCache {

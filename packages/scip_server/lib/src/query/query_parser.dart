@@ -9,7 +9,7 @@
 /// - `subtypes <symbol>` - Get subtypes
 /// - `hierarchy <symbol>` - Full hierarchy (supertypes + subtypes)
 /// - `source <symbol>` - Get source code
-/// - `find <pattern> [kind:<kind>] [in:<path>]` - Search symbols
+/// - `find <pattern> [kind:<kind>] [in:<path>] [lang:<language>]` - Search symbols
 /// - `which <symbol>` - Show all matches for disambiguation
 /// - `grep <pattern> [in:<path>] [-i] [-C:n]` - Search in source code (like grep)
 /// - `calls <symbol>` - What does this symbol call?
@@ -30,6 +30,7 @@
 /// Filters (for `find` and `grep`):
 /// - `kind:class` - Filter by symbol kind
 /// - `in:lib/` - Filter by file path prefix
+/// - `lang:dart` - Filter by programming language
 ///
 /// Grep flags:
 /// - `-i` - Case insensitive
@@ -65,6 +66,7 @@
 /// - `imports lib/auth/service.dart`
 /// - `sig AuthService.login` - Get method signature
 /// - `find Auth* kind:class | members`
+/// - `find String kind:class lang:dart` - Only Dart's String (no JS/Wasm variants)
 library;
 
 // ignore: implementation_imports
@@ -249,6 +251,9 @@ class ScipQuery {
 
   /// Get the path filter.
   String? get pathFilter => filters['in'];
+
+  /// Get the language filter.
+  String? get languageFilter => filters['lang'];
 
   /// Get context lines for grep (-C:n).
   /// Returns null if -A or -B are specified separately.

@@ -6,24 +6,37 @@ import 'package:dart_mcp/server.dart';
 
 import '../code_context.dart';
 
-/// Mix this in to any MCPServer to add Dart code intelligence via dart_context.
+/// Mix this in to any MCPServer to add code intelligence via code_context.
 ///
-/// Provides a single `dart_query` tool that accepts DSL queries like:
-/// - `def AuthRepository` - Find definition
-/// - `refs login` - Find references
-/// - `find Auth* kind:class` - Search with filters
-/// - `members MyClass` - Get class members
-/// - `hierarchy MyWidget` - Get type hierarchy
+/// Currently provides Dart code intelligence via `dart_query` and related tools.
+/// Future language support will add additional tools with language prefixes.
+///
+/// ## Available Tools
+///
+/// - `dart_query` - Query Dart codebase with DSL
+/// - `dart_index_flutter` - Index Flutter SDK packages
+/// - `dart_index_deps` - Index pub dependencies
+/// - `dart_refresh` - Refresh project index
+/// - `dart_status` - Show index status
 ///
 /// Example usage:
 /// ```dart
-/// class MyServer extends MCPServer with DartContextSupport {
+/// class MyServer extends MCPServer with CodeContextSupport {
 ///   // ...
 /// }
 /// ```
-base mixin DartContextSupport on ToolsSupport, RootsTrackingSupport {
+base mixin CodeContextSupport on ToolsSupport, RootsTrackingSupport {
   /// Cached CodeContext instances per project root.
   final Map<String, CodeContext> _contexts = {};
+
+  /// Get the Dart registry from a context (Dart-specific).
+  PackageRegistry? _getRegistry(CodeContext context) {
+    final langContext = context.context;
+    if (langContext is DartLanguageContext) {
+      return langContext.registry;
+    }
+    return null;
+  }
 
   /// File watchers for package_config.json per project root.
   final Map<String, StreamSubscription<FileSystemEvent>>
@@ -42,12 +55,18 @@ base mixin DartContextSupport on ToolsSupport, RootsTrackingSupport {
     if (!supportsRoots) {
       log(
         LoggingLevel.warning,
-        'DartContextSupport requires the "roots" capability which is not '
-        'supported. dart_query tool has been disabled.',
+        'CodeContextSupport requires the "roots" capability which is not '
+        'supported. Query tools have been disabled.',
       );
       return result;
     }
 
+    // Register available language bindings for auto-detection
+    CodeContext.registerBinding(DartBinding());
+    // Future: CodeContext.registerBinding(TypeScriptBinding());
+    // Future: CodeContext.registerBinding(PythonBinding());
+
+    // Register Dart-specific tools
     registerTool(dartQueryTool, _handleDartQuery);
     registerTool(dartIndexFlutterTool, _handleIndexFlutter);
     registerTool(dartIndexDepsTool, _handleIndexDeps);
@@ -73,7 +92,7 @@ base mixin DartContextSupport on ToolsSupport, RootsTrackingSupport {
       await _packageConfigWatchers[root]?.cancel();
       _packageConfigWatchers.remove(root);
       _staleRoots.remove(root);
-      log(LoggingLevel.debug, 'Removed CodeContext for: $root');
+      log(LoggingLevel.debug, 'Removed context for: $root');
     }
 
     // Add contexts for new roots (lazily - will be created on first query)
@@ -161,6 +180,7 @@ base mixin DartContextSupport on ToolsSupport, RootsTrackingSupport {
         // Create a new context
         try {
           log(LoggingLevel.info, 'Creating CodeContext for: ${root.uri}');
+          // Auto-detect language from project files
           final context = await CodeContext.open(
             rootPath,
             watch: true,
@@ -172,8 +192,9 @@ base mixin DartContextSupport on ToolsSupport, RootsTrackingSupport {
           // Start watching package_config.json
           _watchPackageConfig(root.uri, rootPath);
 
-          final depsInfo = context.hasDependencies
-              ? ', ${context.registry.packageIndexes.length} packages loaded'
+          final registry = _getRegistry(context);
+          final depsInfo = context.hasDependencies && registry != null
+              ? ', ${registry.packageIndexes.length} packages loaded'
               : '';
           log(
             LoggingLevel.info,
@@ -213,6 +234,7 @@ base mixin DartContextSupport on ToolsSupport, RootsTrackingSupport {
 
     try {
       log(LoggingLevel.info, 'Creating CodeContext for: ${firstRoot.uri}');
+      // Auto-detect language from project files
       final context = await CodeContext.open(
         rootPath,
         watch: true,
@@ -224,8 +246,9 @@ base mixin DartContextSupport on ToolsSupport, RootsTrackingSupport {
       // Start watching package_config.json
       _watchPackageConfig(firstRoot.uri, rootPath);
 
-      final depsInfo = context.hasDependencies
-          ? ', ${context.registry.packageIndexes.length} packages loaded'
+      final reg = _getRegistry(context);
+      final depsInfo = context.hasDependencies && reg != null
+          ? ', ${reg.packageIndexes.length} packages loaded'
           : '';
       log(
         LoggingLevel.info,
@@ -264,7 +287,7 @@ base mixin DartContextSupport on ToolsSupport, RootsTrackingSupport {
         content: [
           TextContent(
             text:
-                'No Dart project found. Make sure roots are set and contain a pubspec.yaml.',
+                'No project found. Make sure roots are set and contain a supported project file (e.g., pubspec.yaml for Dart).',
           ),
         ],
         isError: true,
@@ -329,7 +352,8 @@ base mixin DartContextSupport on ToolsSupport, RootsTrackingSupport {
       }
       output.writeln('');
       output.writeln(
-          'Indexes saved to: ${registry.globalCachePath}/flutter/${result.version}/',);
+        'Indexes saved to: ${registry.globalCachePath}/flutter/${result.version}/',
+      );
 
       return CallToolResult(
         content: [TextContent(text: output.toString())],
@@ -469,8 +493,10 @@ base mixin DartContextSupport on ToolsSupport, RootsTrackingSupport {
       }
       log(LoggingLevel.info, 'Analyzing project files...');
 
+      // Use DartBinding explicitly for Dart projects
       final context = await CodeContext.open(
         rootPath,
+        binding: DartBinding(),
         watch: true,
         useCache: !fullReindex,
         loadDependencies: true,
@@ -482,16 +508,17 @@ base mixin DartContextSupport on ToolsSupport, RootsTrackingSupport {
       // Re-establish package_config watcher
       _watchPackageConfig(targetRoot.uri, rootPath);
 
-      final depsInfo = context.hasDependencies
-          ? ', ${context.registry.packageIndexes.length} packages loaded'
+      final refreshRegistry = _getRegistry(context);
+      final depsInfo = context.hasDependencies && refreshRegistry != null
+          ? ', ${refreshRegistry.packageIndexes.length} packages loaded'
           : '';
 
       final output = StringBuffer();
       output.writeln('Refreshed: $rootPath');
       output.writeln('Files: ${context.stats['files']}');
       output.writeln('Symbols: ${context.stats['symbols']}');
-      if (context.hasDependencies) {
-        output.writeln('Packages: ${context.registry.packageIndexes.length}');
+      if (context.hasDependencies && refreshRegistry != null) {
+        output.writeln('Packages: ${refreshRegistry.packageIndexes.length}');
       }
 
       log(
@@ -534,7 +561,7 @@ base mixin DartContextSupport on ToolsSupport, RootsTrackingSupport {
     }
 
     final output = StringBuffer();
-    output.writeln('## Dart Context Status (v$dartContextVersion)');
+    output.writeln('## Code Context Status (v$dartContextVersion)');
     output.writeln('');
 
     if (context == null) {
@@ -542,7 +569,8 @@ base mixin DartContextSupport on ToolsSupport, RootsTrackingSupport {
       output.writeln('Status: Not indexed');
       output.writeln('');
       output.writeln(
-          'Use dart_query to trigger indexing, or dart_refresh to reload.',);
+        'Use dart_query to trigger indexing, or dart_refresh to reload.',
+      );
     } else {
       output.writeln('Project: ${context.rootPath}');
       output.writeln('Files: ${context.stats['files']}');
@@ -550,23 +578,25 @@ base mixin DartContextSupport on ToolsSupport, RootsTrackingSupport {
       output.writeln('References: ${context.stats['references'] ?? 0}');
       output.writeln('');
 
-      // Show discovered packages
-      final registry = context.registry;
-      final localPkgs = registry.localPackages.keys.toList();
-      if (localPkgs.isNotEmpty) {
-        output.writeln('### Local Packages (${localPkgs.length})');
-        output.writeln('');
-        for (final pkg in localPkgs.take(10)) {
-          output.writeln('  - $pkg');
+      // Show discovered packages (Dart-specific)
+      final registry = _getRegistry(context);
+      if (registry != null) {
+        final localPkgs = registry.localPackages.keys.toList();
+        if (localPkgs.isNotEmpty) {
+          output.writeln('### Local Packages (${localPkgs.length})');
+          output.writeln('');
+          for (final pkg in localPkgs.take(10)) {
+            output.writeln('  - $pkg');
+          }
+          if (localPkgs.length > 10) {
+            output.writeln('  ... and ${localPkgs.length - 10} more');
+          }
+          output.writeln('');
         }
-        if (localPkgs.length > 10) {
-          output.writeln('  ... and ${localPkgs.length - 10} more');
-        }
-        output.writeln('');
       }
 
       // Show external indexes
-      if (context.hasDependencies) {
+      if (context.hasDependencies && registry != null) {
         output.writeln('### External Indexes');
         output.writeln('');
         if (registry.loadedSdkVersion != null) {
@@ -574,7 +604,8 @@ base mixin DartContextSupport on ToolsSupport, RootsTrackingSupport {
         }
         if (registry.loadedFlutterVersion != null) {
           output.writeln(
-              'Flutter: ${registry.loadedFlutterVersion} (${registry.flutterPackages.length} packages)',);
+            'Flutter: ${registry.loadedFlutterVersion} (${registry.flutterPackages.length} packages)',
+          );
         }
 
         // Show hosted packages
@@ -586,13 +617,9 @@ base mixin DartContextSupport on ToolsSupport, RootsTrackingSupport {
           }
           if (registry.hostedPackages.length > 5) {
             output.writeln(
-                '  ... and ${registry.hostedPackages.length - 5} more',);
+              '  ... and ${registry.hostedPackages.length - 5} more',
+            );
           }
-        }
-        
-        // Show git packages
-        if (registry.gitPackages.isNotEmpty) {
-          output.writeln('Git packages: ${registry.gitPackages.length}');
         }
 
         // Show git packages
@@ -612,10 +639,11 @@ base mixin DartContextSupport on ToolsSupport, RootsTrackingSupport {
             output.writeln('  - $name');
           }
         }
-      } else {
+      } else if (!context.hasDependencies) {
         output.writeln('External indexes: Not loaded');
         output.writeln(
-            'Use dart_index_flutter and dart_index_deps to enable cross-package queries.',);
+          'Use dart_index_flutter and dart_index_deps to enable cross-package queries.',
+        );
       }
     }
 
@@ -632,9 +660,11 @@ base mixin DartContextSupport on ToolsSupport, RootsTrackingSupport {
     output.writeln('### Available Indexes (on disk)');
     output.writeln('');
     output.writeln(
-        'SDK versions: ${sdkVersions.isEmpty ? "(none)" : sdkVersions.join(", ")}',);
+      'SDK versions: ${sdkVersions.isEmpty ? "(none)" : sdkVersions.join(", ")}',
+    );
     output.writeln(
-        'Flutter versions: ${flutterVersions.isEmpty ? "(none)" : flutterVersions.join(", ")}',);
+      'Flutter versions: ${flutterVersions.isEmpty ? "(none)" : flutterVersions.join(", ")}',
+    );
     output.writeln('Package indexes: ${packages.length}');
 
     // Check for Flutter project and give hints
@@ -653,9 +683,11 @@ base mixin DartContextSupport on ToolsSupport, RootsTrackingSupport {
         final hasFlutterIndexes = flutterVersions.isNotEmpty;
         if (isFlutter && !hasFlutterIndexes) {
           output.writeln(
-              '⚠️ Flutter project detected but Flutter SDK not indexed.',);
+            '⚠️ Flutter project detected but Flutter SDK not indexed.',
+          );
           output.writeln(
-              '   Run: `dart_index_flutter` to enable widget hierarchy queries.',);
+            '   Run: `dart_index_flutter` to enable widget hierarchy queries.',
+          );
           output.writeln('');
         }
 
@@ -672,9 +704,11 @@ base mixin DartContextSupport on ToolsSupport, RootsTrackingSupport {
                 .writeln('📦 ${missingDeps.length} dependencies not indexed:');
             final toShow = missingDeps.take(5).map((d) => d.name).toList();
             output.writeln(
-                '   ${toShow.join(", ")}${missingDeps.length > 5 ? " ..." : ""}',);
+              '   ${toShow.join(", ")}${missingDeps.length > 5 ? " ..." : ""}',
+            );
             output.writeln(
-                '   Run: `dart_index_deps` to index all dependencies.',);
+              '   Run: `dart_index_deps` to index all dependencies.',
+            );
             output.writeln('');
           } else if (deps.isNotEmpty) {
             output.writeln('✓ All ${deps.length} dependencies are indexed.');
@@ -694,7 +728,8 @@ base mixin DartContextSupport on ToolsSupport, RootsTrackingSupport {
           if (currentSdkVersion != null &&
               !sdkVersions.contains(currentSdkVersion)) {
             output.writeln(
-                '⚠️ Current SDK ($currentSdkVersion) differs from indexed: ${sdkVersions.join(", ")}',);
+              '⚠️ Current SDK ($currentSdkVersion) differs from indexed: ${sdkVersions.join(", ")}',
+            );
             output.writeln('   Consider re-indexing for accurate results.');
           }
         }
@@ -918,4 +953,3 @@ Use to verify indexing is complete before querying.''',
     ),
   );
 }
-

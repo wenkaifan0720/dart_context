@@ -35,14 +35,14 @@ Indexes are stored in `~/.code_context/` with a structure that mirrors pub cache
 ```
 ~/.code_context/                      # Global cache
 ├── sdk/
-│   └── 3.2.0/index.scip             # Dart SDK indexes
+│   └── 3.7.1/index.scip              # Dart SDK (versioned)
 ├── flutter/
-│   └── 3.32.0/flutter/index.scip    # Flutter SDK packages
+│   └── 3.32.0/flutter/index.scip     # Flutter SDK packages
 ├── hosted/
-│   ├── collection-1.18.0/index.scip # Pub packages
+│   ├── collection-1.18.0/index.scip  # Pub packages
 │   └── analyzer-6.3.0/index.scip
 └── git/
-    └── fluxon-bfef6c5e/index.scip   # Git dependencies
+    └── fluxon-bfef6c5e/index.scip    # Git dependencies
 ```
 
 ## Example Queries
@@ -50,21 +50,24 @@ Indexes are stored in `~/.code_context/` with a structure that mirrors pub cache
 With pre-computed indexes, you can:
 
 ```bash
-# See Flutter widget hierarchy
-hierarchy SignatureVisitor
+# See widget hierarchy
+code_context --with-deps "hierarchy SignatureVisitor"
 # Output: Shows that it extends RecursiveAstVisitor from analyzer
 
 # Get full Flutter supertypes
-supertypes MyWidget
+code_context --with-deps "supertypes MyWidget"
 # Output: Full hierarchy including StatelessWidget, Widget, etc.
 
 # Find all uses of a Flutter class
-refs StatefulWidget
+code_context --with-deps "refs StatefulWidget"
 # Output: All files using StatefulWidget
 
 # Search in dependencies
-grep /build.*Widget/ -D
+code_context --with-deps "grep /build.*Widget/ -D"
 # Output: Matches in Flutter source code
+
+# Find SDK types with language filter
+code_context --with-deps "find int kind:class lang:Dart"
 ```
 
 ## Loading Dependencies Programmatically
@@ -84,10 +87,11 @@ final hierarchy = await context.query('hierarchy MyWidget');
 
 ## Performance Considerations
 
-- Pre-indexing takes time (~1-2 min for Flutter SDK)
+- Pre-indexing takes time (~30s for SDK, ~1-2 min for Flutter SDK)
 - Once indexed, loading is instant (just reads from disk)
 - Only index what you need (SDK vs Flutter vs all deps)
 - Indexes are shared across projects
 
 **Note**: Pre-indexing is optional. By default, code_context only indexes your project code.
 
+**Note**: Pre-indexing is optional. By default, code_context only indexes your project code.

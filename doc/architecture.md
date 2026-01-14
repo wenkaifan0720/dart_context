@@ -18,11 +18,9 @@ code_context provides lightweight semantic code intelligence for Dart projects. 
 │                                                         │              │
 │                                                         ▼              │
 │  ┌──────────────────────────────────────────────────────────────────┐  │
-│  │                     PackageRegistry                              │  │
-│  │  Local packages (mutable) + External packages (cached)          │  │
-│  │  Cross-package symbol search, dependency resolution             │  │
+│  │                     LanguageBinding                              │  │
+│  │  Dart (DartBinding) | TypeScript (future) | Python (future)     │  │
 │  └──────────────────────────────────────────────────────────────────┘  │
-│                                  │                                     │
 │              ┌───────────────────┼───────────────────┐                 │
 │              ▼                   ▼                   ▼                 │
 │  ┌───────────────────┐  ┌───────────────┐  ┌────────────────────────┐ │
@@ -48,12 +46,15 @@ code_context/
 │   │   │   └── language_binding.dart
 │   │   └── pubspec.yaml
 │   │
-│   └── dart_binding/         # Dart-specific implementation
-│       ├── lib/src/
-│       │   ├── adapters/     # Analyzer adapters
-│       │   ├── cache/        # Cache path management
-│       │   └── ...           # Incremental indexer, package discovery
-│       └── pubspec.yaml
+│   ├── dart_binding/         # Dart-specific implementation
+│   │   ├── lib/src/
+│   │   │   ├── adapters/     # Analyzer adapters (bring your own analyzer)
+│   │   │   ├── cache/        # Cache path management
+│   │   │   └── ...           # Incremental indexer, package discovery
+│   │   └── pubspec.yaml
+│   │
+│   └── scip_dart/            # Local fork of scip-dart indexer
+│       └── lib/src/          # SCIP visitor, symbol generator
 │
 ├── lib/                      # Root package (code_context)
 │   ├── code_context.dart     # Re-exports for public API
@@ -79,12 +80,14 @@ code_context/
 | `QueryExecutor` | Executes queries against an index |
 | `IndexProvider` | Abstract interface for cross-index operations |
 | `LanguageBinding` | Interface for language-specific implementations |
+| `LanguageContext` | Abstract runtime context per language |
 
 ### dart_binding (Dart-Specific)
 
 | Component | Description |
 |-----------|-------------|
 | `DartBinding` | Implements `LanguageBinding` for Dart |
+| `DartLanguageContext` | Dart-specific `LanguageContext` implementation |
 | `IncrementalScipIndexer` | File-watching incremental indexer |
 | `PackageRegistry` | Manages local + external package indexes |
 | `PackageDiscovery` | Discovers packages in monorepos |
@@ -94,6 +97,12 @@ code_context/
 | `DartNavigationChainExtractor` | Extracts call chains using Dart Analyzer AST |
 
 ## How It Works
+
+### Initialization Flow
+
+1. **Register Bindings**: `CodeContext.registerBinding(DartBinding())`
+2. **Auto-Detection**: `CodeContext.open()` detects language from project files
+3. **Create Context**: Binding creates a `LanguageContext` with indexer and registry
 
 ### Indexing Flow
 
@@ -107,7 +116,8 @@ code_context/
 
 1. **Parse**: DSL string → `ScipQuery` object
 2. **Execute**: Query runs against `ScipIndex` (or `IndexProvider` for cross-package)
-3. **Format**: Results formatted as text or JSON
+3. **Filter**: Apply kind/path/language filters
+4. **Format**: Results formatted as text or JSON
 
 ### Caching
 
@@ -125,14 +135,74 @@ Global pre-computed indexes are stored in `~/.code_context/`:
 ```
 ~/.code_context/
 ├── sdk/
-│   └── 3.2.0/index.scip             # Dart SDK
+│   └── 3.7.1/index.scip              # Dart SDK (versioned)
 ├── flutter/
-│   └── 3.32.0/flutter/index.scip    # Flutter packages
+│   └── 3.32.0/flutter/index.scip     # Flutter packages
 ├── hosted/
-│   ├── collection-1.18.0/index.scip # Pub packages
+│   ├── collection-1.18.0/index.scip  # Pub packages
 │   └── analyzer-6.3.0/index.scip
 └── git/
-    └── fluxon-bfef6c5e/index.scip   # Git dependencies
+    └── fluxon-bfef6c5e/index.scip    # Git dependencies
+```
+
+## Bringing Your Own Analyzer
+
+For IDE integration (e.g., Hologram), you can provide your own analyzer:
+
+```dart
+import 'package:dart_binding/dart_binding.dart';
+
+// Create adapter wrapping your analyzer
+final adapter = HologramAnalyzerAdapter(
+  projectRoot: myAnalyzer.projectRoot,
+  getResolvedUnit: (path) => myAnalyzer.getResolvedUnit(path),
+  fileChanges: myFsWatcher.events.map(...),
+);
+
+// Create indexer with adapter
+final indexer = await IncrementalScipIndexer.openWithAdapter(
+  adapter,
+  packageConfig: packageConfig,
+  pubspec: pubspec,
+);
+```
+
+This avoids creating a second analyzer instance and shares the resolution work.
+
+## Multi-Language Support
+
+Adding a new language requires implementing `LanguageBinding`:
+
+```dart
+class TypeScriptBinding implements LanguageBinding {
+  @override
+  String get languageId => 'typescript';
+  
+  @override
+  List<String> get extensions => ['.ts', '.tsx'];
+  
+  @override
+  String get packageFile => 'package.json';
+  
+  @override
+  Future<List<DiscoveredPackage>> discoverPackages(String rootPath) async {
+    // Find package.json files
+  }
+  
+  @override
+  Future<PackageIndexer> createIndexer(String packagePath, {bool useCache = true}) async {
+    // Create SCIP indexer for TypeScript
+  }
+  
+  // ... other methods
+}
+```
+
+Then register it:
+
+```dart
+CodeContext.registerBinding(TypeScriptBinding());
+final ctx = await CodeContext.open('/path/to/ts/project');
 ```
 
 ## Performance
@@ -144,6 +214,7 @@ Global pre-computed indexes are stored in `~/.code_context/`:
 | Incremental update | ~100-200ms per file |
 | Query execution | <10ms |
 | Cache size | ~2.5MB for 85 files |
+| SDK indexing | ~30s (one-time, cached globally) |
 
 ## Design Goals
 
@@ -152,4 +223,4 @@ Global pre-computed indexes are stored in `~/.code_context/`:
 3. **AI-Friendly**: DSL designed for LLM/agent consumption
 4. **Extensible**: Language-agnostic core with pluggable bindings
 5. **SCIP-Compatible**: Uses standard SCIP format for interoperability
-
+6. **Bring Your Own Analyzer**: Integrate with existing IDE analyzers

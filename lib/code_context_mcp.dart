@@ -7,10 +7,10 @@
 /// import 'package:code_context/code_context_mcp.dart';
 /// import 'package:dart_mcp/server.dart';
 ///
-/// class MyServer extends MCPServer with DartContextSupport {
+/// class MyServer extends MCPServer with CodeContextSupport {
 ///   // Your server implementation
 /// }
 /// ```
 library;
 
-export 'src/mcp/dart_context_mcp.dart' show DartContextSupport;
+export 'src/mcp/code_context_mcp.dart' show CodeContextSupport;

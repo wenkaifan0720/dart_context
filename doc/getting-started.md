@@ -37,10 +37,14 @@ void main() async {
   final members = await context.query('members MyClass');
   print(members.toJson());
 
-  // Watch for updates
-  context.updates.listen((update) {
-    print('Index updated: $update');
-  });
+  // Load external dependencies (SDK, packages)
+  if (!context.hasDependencies) {
+    await context.loadDependencies();
+  }
+
+  // Query across dependencies
+  final sdkResult = await context.query('find String kind:class');
+  print(sdkResult.toText());
 
   // Cleanup
   await context.dispose();
@@ -79,6 +83,24 @@ code_context -f json refs login
 code_context --no-cache stats
 ```
 
+## Query DSL
+
+| Query | Description | Example |
+|-------|-------------|---------|
+| `def <symbol>` | Find definition | `def AuthRepository` |
+| `refs <symbol>` | Find references | `refs login` |
+| `find <pattern>` | Search symbols | `find Auth*` |
+| `grep <pattern>` | Search source | `grep /TODO\|FIXME/` |
+| `members <symbol>` | Class members | `members MyClass` |
+
+## Filters
+
+| Filter | Description | Example |
+|--------|-------------|---------|
+| `kind:<kind>` | Filter by symbol kind | `kind:class`, `kind:method` |
+| `in:<path>` | Filter by file path | `in:lib/auth/` |
+| `lang:<language>` | Filter by language | `lang:Dart` |
+
 ## Next Steps
 
 - [Query DSL Reference](query-dsl.md) - Full command reference
@@ -87,4 +109,5 @@ code_context --no-cache stats
 - [Flutter Navigation](flutter-navigation.md) - Navigation flow detection
 - [MCP Integration](mcp-integration.md) - Using with Cursor/AI agents
 - [Monorepo Support](monorepo.md) - Multi-package workspaces
-
+- [Cross-Package Queries](cross-package-queries.md) - Querying SDK and dependencies
+- [Analyzer Integration](analyzer-integration.md) - Sharing analyzer contexts

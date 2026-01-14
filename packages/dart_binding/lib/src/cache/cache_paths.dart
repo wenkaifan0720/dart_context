@@ -1,14 +1,27 @@
 import 'dart:io';
 
-/// Centralized cache path management for dart_context.
+/// Centralized cache path management for dart_binding.
 ///
-/// Mirrors the structure of ~/.pub-cache for familiarity:
+/// ## Cache Structure
+///
+/// **Global cache** (`~/.dart_context/`) for external packages,
+/// similar to `~/.pub-cache`:
 /// ```
 /// ~/.dart_context/
 /// ├── sdk/3.5.0/index.scip           # Dart SDK indexes
 /// ├── flutter/3.32.0/flutter/...     # Flutter SDK packages
 /// ├── hosted/collection-1.18.0/...   # Pub.dev packages
 /// └── git/fluxon-bfef6c5e/...        # Git dependencies
+/// ```
+///
+/// **Per-package cache** (`.dart_context/`) for local packages,
+/// following the `.dart_tool` convention:
+/// ```
+/// /path/to/package/
+/// ├── .dart_tool/                    # Dart's package config
+/// └── .dart_context/                 # Our index cache
+///     ├── index.scip
+///     └── manifest.json
 /// ```
 class CachePaths {
   /// Get the global cache directory.
@@ -82,46 +95,22 @@ class CachePaths {
   static String gitManifest(String repoCommitKey) =>
       '${gitDir(repoCommitKey)}/manifest.json';
 
-  /// Path to workspace registry directory.
+  /// Path to per-package index directory.
   ///
-  /// Example: `/path/to/monorepo/.dart_context/`
-  static String workspaceDir(String workspaceRoot) =>
-      '$workspaceRoot/.dart_context';
-
-  /// Path to workspace metadata file.
+  /// Each package stores its own index in `.dart_context/` within
+  /// its root directory, following the `.dart_tool` convention.
   ///
-  /// Example: `/path/to/monorepo/.dart_context/workspace.json`
-  static String workspaceMetadata(String workspaceRoot) =>
-      '${workspaceDir(workspaceRoot)}/workspace.json';
-
-  /// Path to local package index directory in workspace registry.
-  ///
-  /// Example: `/path/to/monorepo/.dart_context/local/hologram_core/`
-  static String localPackageDir(String workspaceRoot, String packageName) =>
-      '${workspaceDir(workspaceRoot)}/local/$packageName';
-
-  /// Path to local package index file in workspace registry.
-  static String localPackageIndex(String workspaceRoot, String packageName) =>
-      '${localPackageDir(workspaceRoot, packageName)}/index.scip';
-
-  /// Path to local package manifest file in workspace registry.
-  static String localPackageManifest(
-          String workspaceRoot, String packageName,) =>
-      '${localPackageDir(workspaceRoot, packageName)}/manifest.json';
-
-  /// Path to per-package working index directory.
-  ///
-  /// Example: `/path/to/monorepo/packages/hologram_core/.dart_context/`
-  static String packageWorkingDir(String packagePath) =>
+  /// Example: `/path/to/package/.dart_context/`
+  static String packageDir(String packagePath) =>
       '$packagePath/.dart_context';
 
-  /// Path to per-package working index file.
-  static String packageWorkingIndex(String packagePath) =>
-      '${packageWorkingDir(packagePath)}/index.scip';
+  /// Path to per-package index file.
+  static String packageIndex(String packagePath) =>
+      '${packageDir(packagePath)}/index.scip';
 
-  /// Path to per-package working manifest file.
-  static String packageWorkingManifest(String packagePath) =>
-      '${packageWorkingDir(packagePath)}/manifest.json';
+  /// Path to per-package manifest file.
+  static String packageManifest(String packagePath) =>
+      '${packageDir(packagePath)}/manifest.json';
 
   // ─────────────────────────────────────────────────────────────────────────
   // Utility methods
@@ -148,10 +137,9 @@ class CachePaths {
     return File(gitIndex(repoCommitKey)).exists();
   }
 
-  /// Check if a local package index exists in workspace registry.
-  static Future<bool> hasLocalPackageIndex(
-      String workspaceRoot, String packageName,) async {
-    return File(localPackageIndex(workspaceRoot, packageName)).exists();
+  /// Check if a local package index exists.
+  static Future<bool> hasPackageIndex(String packagePath) async {
+    return File(packageIndex(packagePath)).exists();
   }
 
   /// List all indexed SDK versions.

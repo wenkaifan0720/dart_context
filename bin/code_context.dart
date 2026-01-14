@@ -3,7 +3,8 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:args/args.dart';
-import 'package:code_context/code_context.dart';
+import 'package:code_context/code_context.dart' hide FileUpdatedUpdate, FileRemovedUpdate, IndexErrorUpdate;
+import 'package:dart_binding/dart_binding.dart' show DartLanguageContext;
 import 'package:scip_server/scip_server.dart' show
     ContextBuilder,
     ContextFormatter,
@@ -17,41 +18,61 @@ import 'package:scip_server/scip_server.dart' show
     // Agentic LLM components
     AnthropicService,
     DocGenerationAgent,
-    DocToolRegistry;
+    DocToolRegistry, FileUpdatedUpdate, FileRemovedUpdate, IndexErrorUpdate;
 
 void main(List<String> arguments) async {
+  // Register language bindings for auto-detection
+  CodeContext.registerBinding(DartBinding());
+
   // Check for subcommands first
   if (arguments.isNotEmpty) {
-    switch (arguments.first) {
-      case 'index-sdk':
-        await _indexSdk(arguments.skip(1).toList());
-        return;
-      case 'index-flutter':
-        await _indexFlutter(arguments.skip(1).toList());
-        return;
-      case 'index-deps':
-        await _indexDependencies(arguments.skip(1).toList());
-        return;
-      case 'list-indexes':
-        await _listIndexes();
-        return;
+    final cmd = arguments.first;
+
+    // Generic commands
+    switch (cmd) {
       case 'list-packages':
         await _listPackages(arguments.skip(1).toList());
-        return;
-      case 'generate-docs':
-        await _generateDocs(arguments.skip(1).toList());
         return;
       case 'docs':
         await _handleDocs(arguments.skip(1).toList());
         return;
     }
+
+    // Dart-specific commands (dart: prefix)
+    if (cmd.startsWith('dart:')) {
+      final dartCmd = cmd.substring(5);
+      switch (dartCmd) {
+        case 'index-sdk':
+          await _dartIndexSdk(arguments.skip(1).toList());
+          return;
+        case 'index-flutter':
+          await _dartIndexFlutter(arguments.skip(1).toList());
+          return;
+        case 'index-deps':
+          await _dartIndexDependencies(arguments.skip(1).toList());
+          return;
+        case 'list-indexes':
+          await _dartListIndexes();
+          return;
+        default:
+          stderr.writeln('Unknown Dart command: dart:$dartCmd');
+          stderr.writeln('');
+          stderr.writeln('Available Dart commands:');
+          stderr.writeln('  dart:index-sdk      Index Dart SDK');
+          stderr.writeln('  dart:index-flutter  Index Flutter packages');
+          stderr.writeln('  dart:index-deps     Index pub dependencies');
+          stderr.writeln('  dart:list-indexes   List available indexes');
+          exit(1);
+      }
+    }
+
   }
 
   final parser = ArgParser()
     ..addOption(
       'project',
       abbr: 'p',
-      help: 'Path to the Dart project (defaults to current directory)',
+      help: 'Path to the project (defaults to current directory)',
       defaultsTo: '.',
     )
     ..addOption(
@@ -60,11 +81,6 @@ void main(List<String> arguments) async {
       help: 'Output format: text or json',
       defaultsTo: 'text',
       allowed: ['text', 'json'],
-    )
-    ..addOption(
-      'output',
-      abbr: 'o',
-      help: 'Write output to file instead of stdout',
     )
     ..addFlag(
       'watch',
@@ -85,7 +101,7 @@ void main(List<String> arguments) async {
     )
     ..addFlag(
       'with-deps',
-      help: 'Load pre-indexed dependencies for cross-package queries',
+      help: 'Load pre-indexed dependencies for cross-package queries (Dart)',
       defaultsTo: false,
     )
     ..addFlag(
@@ -111,22 +127,22 @@ void main(List<String> arguments) async {
 
   final projectPath = args['project'] as String;
   final format = args['format'] as String;
-  final outputPath = args['output'] as String?;
   final watch = args['watch'] as bool;
   final interactive = args['interactive'] as bool;
   final noCache = args['no-cache'] as bool;
   final withDeps = args['with-deps'] as bool;
 
-  // Validate project path
-  final pubspecFile = File('$projectPath/pubspec.yaml');
-  if (!await pubspecFile.exists()) {
-    // Check if there are any packages in the directory
-    final discovery = await PackageDiscovery().discoverPackages(projectPath);
-    if (discovery.packages.isEmpty) {
-      stderr.writeln('Error: No Dart packages found in $projectPath');
-      stderr.writeln('Make sure you are in a Dart project directory.');
-      exit(1);
-    }
+  // For Dart projects, use CodeContext with DartBinding
+  // For other languages, use CodeContext
+  final isDartProject = await File('$projectPath/pubspec.yaml').exists() ||
+      (await PackageDiscovery().discoverPackages(projectPath))
+          .packages
+          .isNotEmpty;
+
+  if (!isDartProject) {
+    stderr.writeln('Error: No supported project found in $projectPath');
+    stderr.writeln('Supported languages: Dart (pubspec.yaml)');
+    exit(1);
   }
 
   stderr.writeln('Opening project: $projectPath');
@@ -139,6 +155,7 @@ void main(List<String> arguments) async {
     final stopwatch = Stopwatch()..start();
     context = await CodeContext.open(
       projectPath,
+      binding: DartBinding(),
       watch: watch || interactive,
       useCache: !noCache,
       loadDependencies: withDeps,
@@ -147,8 +164,9 @@ void main(List<String> arguments) async {
 
     final pkgCount = context.packageCount;
     final pkgInfo = pkgCount > 1 ? ' across $pkgCount packages' : '';
-    final depsInfo = withDeps && context.hasDependencies
-        ? ', ${context.registry.packageIndexes.length} external packages loaded'
+    final registry = _getRegistry(context);
+    final depsInfo = withDeps && context.hasDependencies && registry != null
+        ? ', ${registry.packageIndexes.length} external packages loaded'
         : '';
     stderr.writeln(
       'Indexed ${context.stats['files']} files, '
@@ -166,12 +184,12 @@ void main(List<String> arguments) async {
     } else if (args.rest.isEmpty) {
       // No query provided, show stats
       final result = await context.query('stats');
-      _outputResult(result, format, outputPath);
+      _printResult(result, format);
     } else {
       // Execute the query from command line
       final query = args.rest.join(' ');
       final result = await context.query(query);
-      _outputResult(result, format, outputPath);
+      _printResult(result, format);
     }
   } catch (e, st) {
     stderr.writeln('Error: $e');
@@ -185,8 +203,7 @@ void main(List<String> arguments) async {
 }
 
 void _printUsage(ArgParser parser) {
-  stdout.writeln(
-      'code_context - Lightweight semantic code intelligence');
+  stdout.writeln('code_context - Language-agnostic semantic code intelligence');
   stdout.writeln('');
   stdout.writeln('Usage: code_context [options] <query>');
   stdout.writeln('       code_context <subcommand> [args]');
@@ -195,14 +212,13 @@ void _printUsage(ArgParser parser) {
   stdout.writeln(parser.usage);
   stdout.writeln('');
   stdout.writeln('Subcommands:');
-  stdout.writeln('  docs <subcommand>      Auto-docs pipeline (status, context, generate, resolve)');
-  stdout.writeln('  generate-docs [opts]   Generate documentation to docs/');
-  stdout.writeln('  index-sdk <sdk-path>   Pre-index the Dart SDK');
-  stdout.writeln('  index-flutter [path]   Pre-index Flutter packages');
-  stdout.writeln('  index-deps [path]      Pre-index all pub dependencies');
-  stdout.writeln(
-      '  list-indexes           List available pre-computed indexes');
   stdout.writeln('  list-packages [path]   List discovered packages');
+  stdout.writeln('');
+  stdout.writeln('Dart-specific commands:');
+  stdout.writeln('  dart:index-sdk <path>  Pre-index the Dart SDK');
+  stdout.writeln('  dart:index-flutter     Pre-index Flutter packages');
+  stdout.writeln('  dart:index-deps        Pre-index pub dependencies');
+  stdout.writeln('  dart:list-indexes      List available Dart indexes');
   stdout.writeln('');
   stdout.writeln('Query DSL:');
   stdout.writeln('  def <symbol>           Find definition');
@@ -222,8 +238,6 @@ void _printUsage(ArgParser parser) {
   stdout.writeln('  grep <pattern>         Search source code');
   stdout.writeln('  imports <file>         File imports');
   stdout.writeln('  exports <path>         File/directory exports');
-  stdout.writeln('  classify               Layer/feature classification');
-  stdout.writeln('  storyboard             Navigation flow diagram');
   stdout.writeln('  files                  List indexed files');
   stdout.writeln('  stats                  Index statistics');
   stdout.writeln('');
@@ -231,6 +245,7 @@ void _printUsage(ArgParser parser) {
   stdout.writeln(
       '  kind:<kind>            Filter by kind (class, method, function, etc.)');
   stdout.writeln('  in:<path>              Filter by file path prefix');
+  stdout.writeln('  lang:<language>        Filter by language (dart, etc.)');
   stdout.writeln('');
   stdout.writeln('Grep Flags:');
   stdout.writeln('  -i  Case insensitive     -c  Count per file');
@@ -256,11 +271,11 @@ void _printUsage(ArgParser parser) {
   stdout.writeln('  code_context -i                    # Interactive mode');
   stdout.writeln('  code_context -w                    # Watch mode');
   stdout.writeln(
-      '  code_context -w "find * kind:class"  # Watch + re-run on changes');
+      '  code_context -w "find * kind:class" # Watch + re-run on changes');
   stdout.writeln('');
-  stdout.writeln('Pre-indexing dependencies (for cross-package queries):');
-  stdout.writeln('  code_context index-sdk /path/to/dart-sdk');
-  stdout.writeln('  code_context index-deps');
+  stdout.writeln('Dart: Pre-indexing dependencies (for cross-package queries):');
+  stdout.writeln('  code_context dart:index-sdk /path/to/dart-sdk');
+  stdout.writeln('  code_context dart:index-deps');
   stdout.writeln('  code_context --with-deps "hierarchy MyClass"');
   stdout.writeln('');
   stdout.writeln('Mono repo / workspace support:');
@@ -270,30 +285,20 @@ void _printUsage(ArgParser parser) {
 
 void _printResult(QueryResult result, String format) {
   if (format == 'json') {
-    stdout.writeln(const JsonEncoder.withIndent('  ').convert(result.toJson()));
+    stdout
+        .writeln(const JsonEncoder.withIndent('  ').convert(result.toJson()));
   } else {
     stdout.writeln(result.toText());
   }
 }
 
-/// Output result to stdout or a file.
-Future<void> _outputResult(
-  QueryResult result,
-  String format,
-  String? outputPath,
-) async {
-  final content = format == 'json'
-      ? const JsonEncoder.withIndent('  ').convert(result.toJson())
-      : result.toText();
-
-  if (outputPath != null) {
-    final file = File(outputPath);
-    await file.parent.create(recursive: true);
-    await file.writeAsString(content);
-    stderr.writeln('Written to: $outputPath');
-  } else {
-    stdout.writeln(content);
+/// Get the Dart registry from a context (Dart-specific).
+PackageRegistry? _getRegistry(CodeContext context) {
+  final langContext = context.context;
+  if (langContext is DartLanguageContext) {
+    return langContext.registry;
   }
+  return null;
 }
 
 Future<void> _runWatch(
@@ -405,8 +410,8 @@ Future<void> _runInteractive(CodeContext context, String format) async {
         stdout.writeln('  /TODO|FIXME/          Regex pattern');
         stdout.writeln('  /error/i              Case-insensitive regex');
         stdout.writeln('  ~authentcate          Fuzzy (typo-tolerant)');
-        stdout
-            .writeln('  Class.method          Qualified name (disambiguation)');
+        stdout.writeln(
+            '  Class.method          Qualified name (disambiguation)');
         stdout.writeln('');
         stdout.writeln('Filters (for find/grep):');
         stdout.writeln('  kind:class            Filter by kind');
@@ -421,8 +426,8 @@ Future<void> _runInteractive(CodeContext context, String format) async {
         stdout.writeln('  -w                    Word boundary matching');
         stdout.writeln('  -v                    Invert match');
         stdout.writeln('  -D                    Search external dependencies');
-        stdout
-            .writeln('  -C:3                  Context lines (before + after)');
+        stdout.writeln(
+            '  -C:3                  Context lines (before + after)');
         stdout.writeln('  -A:5 -B:2             Lines after / before');
         stdout.writeln('');
         stdout.writeln('Pipe Queries:');
@@ -455,14 +460,20 @@ Future<void> _runInteractive(CodeContext context, String format) async {
   stdout.writeln('Goodbye!');
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Dart-specific commands (dart: prefix)
+// ─────────────────────────────────────────────────────────────────────────────
+
 /// Index the Dart/Flutter SDK for cross-package queries.
-Future<void> _indexSdk(List<String> args) async {
+Future<void> _dartIndexSdk(List<String> args) async {
   if (args.isEmpty) {
-    stderr.writeln('Usage: code_context index-sdk <sdk-path>');
+    stderr.writeln('Usage: code_context dart:index-sdk <sdk-path>');
     stderr.writeln('');
     stderr.writeln('Example:');
-    stderr.writeln('  code_context index-sdk /opt/flutter/bin/cache/dart-sdk');
-    stderr.writeln('  code_context index-sdk \$(dirname \$(which dart))/..');
+    stderr.writeln(
+        '  code_context dart:index-sdk /opt/flutter/bin/cache/dart-sdk');
+    stderr.writeln(
+        '  code_context dart:index-sdk \$(dirname \$(which dart))/..');
     exit(1);
   }
 
@@ -509,7 +520,7 @@ Future<void> _indexSdk(List<String> args) async {
 }
 
 /// Index the Flutter framework packages.
-Future<void> _indexFlutter(List<String> args) async {
+Future<void> _dartIndexFlutter(List<String> args) async {
   // Default to FLUTTER_ROOT env var or common paths
   String? flutterPath;
   if (args.isNotEmpty) {
@@ -530,15 +541,15 @@ Future<void> _indexFlutter(List<String> args) async {
   }
 
   if (flutterPath == null || !await Directory(flutterPath).exists()) {
-    stderr.writeln('Usage: code_context index-flutter [flutter-path]');
+    stderr.writeln('Usage: code_context dart:index-flutter [flutter-path]');
     stderr.writeln('');
     stderr.writeln(
         'If no path is provided, uses FLUTTER_ROOT environment variable');
     stderr.writeln('or tries to find Flutter from PATH.');
     stderr.writeln('');
     stderr.writeln('Example:');
-    stderr.writeln('  code_context index-flutter');
-    stderr.writeln('  code_context index-flutter /opt/flutter');
+    stderr.writeln('  code_context dart:index-flutter');
+    stderr.writeln('  code_context dart:index-flutter /opt/flutter');
     exit(1);
   }
 
@@ -624,7 +635,7 @@ Future<void> _indexFlutter(List<String> args) async {
 }
 
 /// Index all pub dependencies for cross-package queries.
-Future<void> _indexDependencies(List<String> args) async {
+Future<void> _dartIndexDependencies(List<String> args) async {
   final projectPath = args.isNotEmpty ? args.first : '.';
 
   final lockfile = File('$projectPath/pubspec.lock');
@@ -666,12 +677,12 @@ Future<void> _indexDependencies(List<String> args) async {
   }
 }
 
-/// List available pre-computed indexes.
-Future<void> _listIndexes() async {
+/// List available pre-computed indexes (Dart-specific).
+Future<void> _dartListIndexes() async {
   final registry = PackageRegistry(rootPath: '.');
   final builder = ExternalIndexBuilder(registry: registry);
 
-  stdout.writeln('Pre-computed indexes in ${CachePaths.globalCacheDir}:');
+  stdout.writeln('Pre-computed Dart indexes in ${CachePaths.globalCacheDir}:');
   stdout.writeln('');
 
   // List SDK indexes
@@ -746,10 +757,14 @@ Future<void> _listIndexes() async {
   }
   stdout.writeln('');
 
-  stdout.writeln('To index SDK: code_context index-sdk <path>');
-  stdout.writeln('To index Flutter: code_context index-flutter');
-  stdout.writeln('To index deps: code_context index-deps');
+  stdout.writeln('To index SDK: code_context dart:index-sdk <path>');
+  stdout.writeln('To index Flutter: code_context dart:index-flutter');
+  stdout.writeln('To index deps: code_context dart:index-deps');
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Generic commands
+// ─────────────────────────────────────────────────────────────────────────────
 
 /// List discovered packages in a directory.
 Future<void> _listPackages(List<String> args) async {
@@ -758,486 +773,37 @@ Future<void> _listPackages(List<String> args) async {
   stderr.writeln('Discovering packages in $path...');
 
   final stopwatch = Stopwatch()..start();
-  final discovery = await PackageDiscovery().discoverPackages(path);
+
+  // Try each registered binding
+  for (final binding in CodeContext.registeredBindings) {
+    final packages = await binding.discoverPackages(path);
+    if (packages.isNotEmpty) {
+      stopwatch.stop();
+      stdout.writeln('');
+      stdout.writeln(
+          'Found ${packages.length} ${binding.languageId} packages in ${stopwatch.elapsedMilliseconds}ms:');
+      stdout.writeln('');
+
+      for (final pkg in packages) {
+        final cacheDir = '${pkg.path}/.${binding.languageId}_context';
+        final hasCache = await Directory(cacheDir).exists();
+        final cacheStatus = hasCache ? '✓ indexed' : '○ not indexed';
+        stdout.writeln('  ${pkg.name} ($cacheStatus)');
+        stdout.writeln('    Path: ${pkg.path}');
+      }
+      return;
+    }
+  }
+
   stopwatch.stop();
-
   stdout.writeln('');
-  stdout.writeln('Discovered ${discovery.packages.length} packages in ${stopwatch.elapsedMilliseconds}ms:');
+  stdout.writeln('No packages found in $path');
   stdout.writeln('');
-
-  if (discovery.packages.isEmpty) {
-    stdout.writeln('  (no packages found)');
-    stdout.writeln('');
-    stdout.writeln('Make sure the directory contains Dart packages with pubspec.yaml files.');
-    return;
-  }
-
-  for (final pkg in discovery.packages) {
-    stdout.writeln('  ${pkg.name}');
-    stdout.writeln('    Path: ${pkg.relativePath}');
-  }
-  stdout.writeln('');
-
-  // Check for existing workspace cache
-  final cacheDir = CachePaths.workspaceDir(discovery.rootPath);
-  final cacheExists = await Directory(cacheDir).exists();
-  if (cacheExists) {
-    stdout.writeln('Cache: $cacheDir');
-    final localDir = Directory('$cacheDir/local');
-    if (await localDir.exists()) {
-      final indexed =
-          await localDir.list().where((e) => e is Directory).length;
-      stdout.writeln('Indexed packages: $indexed');
-    }
-  } else {
-    stdout.writeln('Cache: (not initialized)');
+  stdout.writeln('Supported languages:');
+  for (final binding in CodeContext.registeredBindings) {
+    stdout.writeln('  - ${binding.languageId} (${binding.packageFile})');
   }
 }
-
-/// Generate documentation files for a project.
-///
-/// Creates:
-/// - docs/architecture-*.md - Layer/feature/module classification
-/// - docs/navigation.md - Storyboard/navigation flow
-/// - docs/index.md - Overview with links to other docs
-Future<void> _generateDocs(List<String> args) async {
-  final parser = ArgParser()
-    ..addOption(
-      'project',
-      abbr: 'p',
-      help: 'Path to the Dart project',
-      defaultsTo: '.',
-    )
-    ..addOption(
-      'output',
-      abbr: 'o',
-      help: 'Output directory for documentation',
-      defaultsTo: 'docs',
-    )
-    ..addOption(
-      'format',
-      abbr: 'f',
-      help: 'Output format: text (markdown) or json',
-      defaultsTo: 'text',
-      allowed: ['text', 'json'],
-    )
-    ..addOption(
-      'mode',
-      abbr: 'm',
-      help: 'Documentation organization mode',
-      defaultsTo: 'all',
-      allowed: ['all', 'layer', 'feature', 'module'],
-      allowedHelp: {
-        'all': 'Generate all views (layer, feature, module)',
-        'layer': 'Group by architectural layer (UI → Service → Data)',
-        'feature': 'Group by feature/user journey (auth, products, etc.)',
-        'module': 'Group by package/module structure',
-      },
-    )
-    ..addFlag(
-      'help',
-      abbr: 'h',
-      help: 'Show help',
-      negatable: false,
-    );
-
-  ArgResults parsed;
-  try {
-    parsed = parser.parse(args);
-  } catch (e) {
-    stderr.writeln('Error: $e');
-    _printGenerateDocsUsage(parser);
-    exit(1);
-  }
-
-  if (parsed['help'] as bool) {
-    _printGenerateDocsUsage(parser);
-    exit(0);
-  }
-
-  // Support both positional arg and --project option
-  var projectPath = parsed['project'] as String;
-  if (parsed.rest.isNotEmpty && projectPath == '.') {
-    projectPath = parsed.rest.first;
-  }
-  final outputDir = parsed['output'] as String;
-  final format = parsed['format'] as String;
-  final mode = parsed['mode'] as String;
-  final ext = format == 'json' ? 'json' : 'md';
-
-  // Validate project path
-  final pubspecFile = File('$projectPath/pubspec.yaml');
-  if (!await pubspecFile.exists()) {
-    final discovery = await PackageDiscovery().discoverPackages(projectPath);
-    if (discovery.packages.isEmpty) {
-      stderr.writeln('Error: No Dart packages found in $projectPath');
-      exit(1);
-    }
-  }
-
-  stderr.writeln('Generating documentation for: $projectPath');
-  stderr.writeln('Output directory: $outputDir');
-  stderr.writeln('Mode: $mode');
-  stderr.writeln('');
-
-  CodeContext? context;
-  try {
-    final stopwatch = Stopwatch()..start();
-    context = await CodeContext.open(projectPath, useCache: true);
-    stopwatch.stop();
-    stderr.writeln(
-      'Indexed ${context.stats['files']} files, '
-      '${context.stats['symbols']} symbols '
-      '(${stopwatch.elapsedMilliseconds}ms)',
-    );
-    stderr.writeln('');
-
-    // Create output directory
-    final docsDir = Directory(
-      projectPath == '.' ? outputDir : '$projectPath/$outputDir',
-    );
-    await docsDir.create(recursive: true);
-
-    final createdFiles = <String>[];
-
-    // Generate layer-based architecture documentation
-    if (mode == 'all' || mode == 'layer') {
-      stderr.write('Generating architecture-layer.$ext... ');
-      final classifyResult = await context.query('classify');
-      final archFile = File('${docsDir.path}/architecture-layer.$ext');
-      final archContent = format == 'json'
-          ? const JsonEncoder.withIndent('  ').convert(classifyResult.toJson())
-          : _wrapArchitectureDoc(classifyResult.toText(), 'Layer');
-      await archFile.writeAsString(archContent);
-      createdFiles.add('${docsDir.path}/architecture-layer.$ext');
-      stderr.writeln('✓');
-    }
-
-    // Generate feature-based architecture documentation
-    if (mode == 'all' || mode == 'feature') {
-      stderr.write('Generating architecture-feature.$ext... ');
-      final classifyResult = await context.query('classify');
-      final archFile = File('${docsDir.path}/architecture-feature.$ext');
-      final archContent = format == 'json'
-          ? const JsonEncoder.withIndent('  ')
-              .convert(_groupByFeature(classifyResult.toJson()))
-          : _wrapArchitectureDoc(
-              _formatByFeature(classifyResult.toJson()),
-              'Feature',
-            );
-      await archFile.writeAsString(archContent);
-      createdFiles.add('${docsDir.path}/architecture-feature.$ext');
-      stderr.writeln('✓');
-    }
-
-    // Generate module-based architecture documentation (for monorepos)
-    if (mode == 'all' || mode == 'module') {
-      stderr.write('Generating architecture-module.$ext... ');
-      final archContent = format == 'json'
-          ? const JsonEncoder.withIndent('  ')
-              .convert(_generateModuleJson(context))
-          : _wrapArchitectureDoc(
-              _formatByModule(context),
-              'Module',
-            );
-      final archFile = File('${docsDir.path}/architecture-module.$ext');
-      await archFile.writeAsString(archContent);
-      createdFiles.add('${docsDir.path}/architecture-module.$ext');
-      stderr.writeln('✓');
-    }
-
-    // Generate navigation documentation
-    stderr.write('Generating navigation.md... ');
-    final storyboardResult = await context.query('storyboard');
-    final navFile = File('${docsDir.path}/navigation.md');
-    final navContent = _wrapNavigationDoc(storyboardResult.toText());
-    await navFile.writeAsString(navContent);
-    createdFiles.add('${docsDir.path}/navigation.md');
-    stderr.writeln('✓');
-
-    // Generate index/overview
-    stderr.write('Generating index.$ext... ');
-    final indexFile = File('${docsDir.path}/index.$ext');
-    if (format == 'json') {
-      final indexJson = {
-        'type': 'docs_index',
-        'generated_at': DateTime.now().toIso8601String(),
-        'mode': mode,
-        'files': createdFiles.map((f) => f.split('/').last).toList(),
-        'stats': context.stats,
-      };
-      await indexFile.writeAsString(
-        const JsonEncoder.withIndent('  ').convert(indexJson),
-      );
-    } else {
-      await indexFile.writeAsString(_generateIndexDoc(context, mode: mode));
-    }
-    createdFiles.add('${docsDir.path}/index.$ext');
-    stderr.writeln('✓');
-
-    stderr.writeln('');
-    stderr.writeln('Documentation generated successfully!');
-    stderr.writeln('');
-    stderr.writeln('Files created:');
-    for (final file in createdFiles) {
-      stderr.writeln('  $file');
-    }
-  } catch (e, st) {
-    stderr.writeln('Error: $e');
-    if (Platform.environment['DEBUG'] != null) {
-      stderr.writeln(st);
-    }
-    exit(1);
-  } finally {
-    await context?.dispose();
-  }
-}
-
-void _printGenerateDocsUsage(ArgParser parser) {
-  stdout.writeln('Generate documentation for a Dart/Flutter project.');
-  stdout.writeln('');
-  stdout.writeln('Usage: code_context generate-docs [options]');
-  stdout.writeln('');
-  stdout.writeln('Options:');
-  stdout.writeln(parser.usage);
-  stdout.writeln('');
-  stdout.writeln('Generated files (mode=all):');
-  stdout.writeln('  index.md                - Overview with links to other docs');
-  stdout.writeln('  architecture-layer.md   - Symbols grouped by layer (UI/Service/Data)');
-  stdout.writeln('  architecture-feature.md - Symbols grouped by feature (auth/products)');
-  stdout.writeln('  architecture-module.md  - Symbols grouped by package/module');
-  stdout.writeln('  navigation.md           - Screen storyboard and navigation flow');
-  stdout.writeln('');
-  stdout.writeln('Examples:');
-  stdout.writeln('  code_context generate-docs');
-  stdout.writeln('  code_context generate-docs -p ./my_app -o generated_docs');
-  stdout.writeln('  code_context generate-docs --mode feature');
-  stdout.writeln('  code_context generate-docs --format json');
-}
-
-String _wrapArchitectureDoc(String content, String viewType) {
-  final descriptions = {
-    'Layer': 'Symbols organized by architectural layer (UI → Service → Data → Model).',
-    'Feature': 'Symbols organized by feature/domain (auth, products, settings, etc.).',
-    'Module': 'Symbols organized by package/module structure.',
-  };
-  
-  return '''# Architecture ($viewType View)
-
-> Auto-generated by code_context. Last updated: ${DateTime.now().toIso8601String()}
-
-${descriptions[viewType] ?? 'Architectural organization of the codebase.'}
-
-$content
-
----
-*Generated by [code_context](https://github.com/user/code_context)*
-''';
-}
-
-String _wrapNavigationDoc(String content) {
-  return '''# Navigation Flow
-
-> Auto-generated by code_context. Last updated: ${DateTime.now().toIso8601String()}
-
-Screen-to-screen navigation structure of the application.
-
-$content
-
----
-*Generated by [code_context](https://github.com/user/code_context)*
-''';
-}
-
-String _generateIndexDoc(CodeContext context, {String mode = 'all'}) {
-  final stats = context.stats;
-  
-  final archLinks = <String>[];
-  if (mode == 'all' || mode == 'layer') {
-    archLinks.add('- [Architecture (Layer)](./architecture-layer.md) - Grouped by architectural layer');
-  }
-  if (mode == 'all' || mode == 'feature') {
-    archLinks.add('- [Architecture (Feature)](./architecture-feature.md) - Grouped by feature/domain');
-  }
-  if (mode == 'all' || mode == 'module') {
-    archLinks.add('- [Architecture (Module)](./architecture-module.md) - Grouped by package/module');
-  }
-  
-  return '''# Project Documentation
-
-> Auto-generated by code_context. Last updated: ${DateTime.now().toIso8601String()}
-
-## Overview
-
-- Files: ${stats['files']}
-- Symbols: ${stats['symbols']}
-
-## Documentation
-
-### Architecture Views
-
-${archLinks.join('\n')}
-
-### Navigation
-
-- [Navigation](./navigation.md) - Screen storyboard and navigation flow
-
-## Quick Start
-
-To regenerate this documentation:
-
-```bash
-code_context generate-docs
-```
-
-To generate a specific view:
-
-```bash
-code_context generate-docs --mode layer   # Layer view only
-code_context generate-docs --mode feature # Feature view only
-code_context generate-docs --mode module  # Module view only
-```
-
-To generate JSON output:
-
-```bash
-code_context generate-docs --format json
-```
-
----
-*Generated by [code_context](https://github.com/user/code_context)*
-''';
-}
-
-/// Group classification results by feature instead of layer.
-Map<String, dynamic> _groupByFeature(Map<String, dynamic> json) {
-  if (json['type'] != 'classify') return json;
-  
-  final byFeature = <String, List<Map<String, dynamic>>>{};
-  final classifications = json['classifications'] as List<dynamic>? ?? [];
-  
-  for (final c in classifications) {
-    final classification = c as Map<String, dynamic>;
-    final feature = classification['feature'] as String? ?? 'uncategorized';
-    byFeature.putIfAbsent(feature, () => []).add(classification);
-  }
-  
-  return {
-    'type': 'classify',
-    'view': 'feature',
-    'generated_at': DateTime.now().toIso8601String(),
-    'features': byFeature.map((feature, items) => MapEntry(feature, {
-      'count': items.length,
-      'symbols': items,
-    })),
-  };
-}
-
-/// Format classification results grouped by feature as markdown.
-String _formatByFeature(Map<String, dynamic> json) {
-  if (json['type'] != 'classify') return json.toString();
-  
-  final byFeature = <String, List<Map<String, dynamic>>>{};
-  final classifications = json['classifications'] as List<dynamic>? ?? [];
-  
-  for (final c in classifications) {
-    final classification = c as Map<String, dynamic>;
-    final feature = classification['feature'] as String? ?? 'uncategorized';
-    byFeature.putIfAbsent(feature, () => []).add(classification);
-  }
-  
-  final buffer = StringBuffer();
-  
-  // Sort features alphabetically
-  final sortedFeatures = byFeature.keys.toList()..sort();
-  
-  for (final feature in sortedFeatures) {
-    final items = byFeature[feature]!;
-    buffer.writeln('## $feature (${items.length})');
-    buffer.writeln('');
-    
-    for (final item in items) {
-      final name = item['name'] ?? 'unknown';
-      final layer = item['layer'] ?? 'unknown';
-      final file = item['file'] ?? 'external';
-      buffer.writeln('- $name [$layer]');
-      buffer.writeln('  $file');
-    }
-    buffer.writeln('');
-  }
-  
-  return buffer.toString();
-}
-
-/// Generate module-based JSON for monorepo structure.
-Map<String, dynamic> _generateModuleJson(CodeContext context) {
-  final localPackages = context.registry.localPackages.values.toList();
-  
-  if (localPackages.isEmpty) {
-    // Single package mode
-    final stats = context.stats;
-    return {
-      'type': 'modules',
-      'view': 'module',
-      'generated_at': DateTime.now().toIso8601String(),
-      'packages': [
-        {
-          'name': context.rootPath.split('/').last,
-          'path': context.rootPath,
-          'files': stats['files'],
-          'symbols': stats['symbols'],
-        },
-      ],
-    };
-  }
-  
-  return {
-    'type': 'modules',
-    'view': 'module',
-    'generated_at': DateTime.now().toIso8601String(),
-    'packages': localPackages.map((pkg) {
-      final index = pkg.index;
-      return {
-        'name': pkg.name,
-        'path': pkg.path,
-        'files': index.files.length,
-        'symbols': index.allSymbols.length,
-      };
-    }).toList(),
-  };
-}
-
-/// Format module structure as markdown.
-String _formatByModule(CodeContext context) {
-  final localPackages = context.registry.localPackages.values.toList();
-  final buffer = StringBuffer();
-  
-  if (localPackages.isEmpty) {
-    // Single package mode
-    final stats = context.stats;
-    buffer.writeln('## ${context.rootPath.split('/').last}');
-    buffer.writeln('');
-    buffer.writeln('- Files: ${stats['files']}');
-    buffer.writeln('- Symbols: ${stats['symbols']}');
-  } else {
-    buffer.writeln('## Packages (${localPackages.length})');
-    buffer.writeln('');
-    
-    for (final pkg in localPackages) {
-      final index = pkg.index;
-      buffer.writeln('- ${pkg.name}');
-      buffer.writeln('  Files: ${index.files.length}, Symbols: ${index.allSymbols.length}');
-    }
-  }
-  
-  return buffer.toString();
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// AUTO-DOCS PIPELINE COMMANDS
-// ═══════════════════════════════════════════════════════════════════════════
-
-/// Handle the `docs` subcommand and its subcommands.
 Future<void> _handleDocs(List<String> args) async {
   if (args.isEmpty) {
     _printDocsUsage();
@@ -1333,9 +899,7 @@ Future<void> _docsStatus(List<String> args) async {
     stderr.writeln('');
 
     // Get the primary index
-    final index = context.registry.localPackages.isEmpty
-        ? context.registry.projectIndex
-        : context.registry.localPackages.values.first.index;
+    final index = context.index;
 
     // Build folder dependency graph
     final graph = FolderDependencyGraph.build(index);
@@ -1464,9 +1028,7 @@ Future<void> _docsContext(List<String> args) async {
     stderr.writeln('');
 
     // Get the primary index
-    final index = context.registry.localPackages.isEmpty
-        ? context.registry.projectIndex
-        : context.registry.localPackages.values.first.index;
+    final index = context.index;
 
     // Build folder dependency graph
     final graph = FolderDependencyGraph.build(index);
@@ -1594,9 +1156,7 @@ Future<void> _docsGenerate(List<String> args) async {
     stderr.writeln('');
 
     // Get the primary index
-    final index = context.registry.localPackages.isEmpty
-        ? context.registry.projectIndex
-        : context.registry.localPackages.values.first.index;
+    final index = context.index;
 
     // Build folder dependency graph
     final graph = FolderDependencyGraph.build(index);
@@ -1843,9 +1403,7 @@ Future<void> _docsResolve(List<String> args) async {
     stderr.writeln('');
 
     // Get the primary index
-    final index = context.registry.localPackages.isEmpty
-        ? context.registry.projectIndex
-        : context.registry.localPackages.values.first.index;
+    final index = context.index;
 
     final docsRoot = '$projectPath/.dart_context/docs';
     final sourceDir = Directory('$docsRoot/source/folders');

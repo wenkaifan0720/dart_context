@@ -133,6 +133,7 @@ class ScipIndex {
         symbolIndex[sym.symbol] = SymbolInfo.fromScip(
           sym,
           file: doc.relativePath,
+          language: doc.language,
         );
 
         // Track parent-child relationships
@@ -222,7 +223,11 @@ class ScipIndex {
 
     // Index symbols
     for (final sym in doc.symbols) {
-      _symbolIndex[sym.symbol] = SymbolInfo.fromScip(sym, file: path);
+      _symbolIndex[sym.symbol] = SymbolInfo.fromScip(
+        sym,
+        file: path,
+        language: doc.language,
+      );
 
       final parent = _extractParentSymbol(sym.symbol);
       if (parent != null) {
@@ -1051,9 +1056,14 @@ class SymbolInfo {
     required this.relationships,
     required this.displayName,
     this.file,
+    this.language,
   });
 
-  factory SymbolInfo.fromScip(scip.SymbolInformation sym, {String? file}) {
+  factory SymbolInfo.fromScip(
+    scip.SymbolInformation sym, {
+    String? file,
+    String? language,
+  }) {
     return SymbolInfo(
       symbol: sym.symbol,
       kind: sym.kind,
@@ -1071,6 +1081,7 @@ class SymbolInfo {
           .toList(),
       displayName: sym.displayName.isNotEmpty ? sym.displayName : null,
       file: file,
+      language: language,
     );
   }
 
@@ -1080,6 +1091,7 @@ class SymbolInfo {
   final List<RelationshipInfo> relationships;
   final String? displayName;
   final String? file;
+  final String? language;
 
   /// Extract the simple name from the symbol ID.
   String get name {

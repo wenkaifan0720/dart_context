@@ -313,8 +313,8 @@ class PackageRegistry {
 
   /// Initialize local packages from discovered packages.
   ///
-  /// Creates an [IncrementalScipIndexer] for each package and syncs
-  /// indexes to the workspace cache.
+  /// Creates an [IncrementalScipIndexer] for each package with its own
+  /// `.dart_context/` cache directory (following the `.dart_tool` convention).
   ///
   /// Packages that fail to initialize (e.g., missing package_config.json)
   /// are skipped with a warning rather than failing the entire operation.
@@ -323,10 +323,6 @@ class PackageRegistry {
     bool useCache = true,
     void Function(String message)? onProgress,
   }) async {
-    // Create registry directory
-    final registryDir = CachePaths.workspaceDir(rootPath);
-    await Directory(registryDir).create(recursive: true);
-
     final skipped = <String>[];
 
     for (final pkg in packages) {
@@ -344,19 +340,12 @@ class PackageRegistry {
           path: pkg.path,
           indexer: indexer,
         );
-
-        // Sync to workspace cache
-        await _syncPackageToCache(pkg.name);
       } catch (e) {
         // Skip packages that can't be initialized (missing package_config.json, etc.)
         skipped.add(pkg.name);
         onProgress?.call('Skipped ${pkg.name}: $e');
       }
     }
-
-    // Save metadata for successfully initialized packages
-    await _saveMetadata(
-        packages.where((p) => !skipped.contains(p.name)).toList(),);
 
     if (skipped.isNotEmpty) {
       onProgress?.call(
@@ -1036,59 +1025,6 @@ class PackageRegistry {
   // ─────────────────────────────────────────────────────────────────────────
   // Private Helpers
   // ─────────────────────────────────────────────────────────────────────────
-
-  Future<void> _syncPackageToCache(String packageName) async {
-    final pkg = _localPackages[packageName];
-    if (pkg == null) return;
-
-    final localDir = CachePaths.localPackageDir(rootPath, packageName);
-    await Directory(localDir).create(recursive: true);
-
-    // Copy index
-    final sourceIndex = CachePaths.packageWorkingIndex(pkg.path);
-    final destIndex = CachePaths.localPackageIndex(rootPath, packageName);
-
-    if (await File(sourceIndex).exists()) {
-      await File(sourceIndex).copy(destIndex);
-    }
-
-    // Write manifest
-    await _writeManifest(localDir, pkg);
-  }
-
-  Future<void> _writeManifest(String dir, LocalPackageIndex pkg) async {
-    final manifest = {
-      'type': 'local',
-      'name': pkg.name,
-      'sourcePath': pkg.path,
-      'indexedAt': DateTime.now().toIso8601String(),
-      'dartContextVersion': dartContextVersion,
-      'manifestVersion': manifestVersion,
-    };
-
-    await File('$dir/manifest.json').writeAsString(
-      const JsonEncoder.withIndent('  ').convert(manifest),
-    );
-  }
-
-  Future<void> _saveMetadata(List<LocalPackage> packages) async {
-    final metadata = {
-      'rootPath': rootPath,
-      'packages': packages
-          .map((p) => {
-                'name': p.name,
-                'relativePath': p.relativePath,
-              },)
-          .toList(),
-      'updatedAt': DateTime.now().toIso8601String(),
-      'dartContextVersion': dartContextVersion,
-    };
-
-    final file = File(CachePaths.workspaceMetadata(rootPath));
-    await file.writeAsString(
-      const JsonEncoder.withIndent('  ').convert(metadata),
-    );
-  }
 
   Future<Map<String, dynamic>?> _loadManifest(String indexDir) async {
     final manifestFile = File('$indexDir/manifest.json');

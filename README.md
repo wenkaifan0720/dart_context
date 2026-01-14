@@ -6,6 +6,7 @@ Lightweight semantic code intelligence. Query your codebase with a simple DSL.
 
 ## Features
 
+- **Multi-language support**: Extensible architecture with Dart as the first supported language
 - **Index caching**: Persistent cache for instant startup (~300ms vs ~10s)
 - **Incremental indexing**: Watches files and updates the index automatically
 - **Simple query DSL**: Human and LLM-friendly query language
@@ -39,6 +40,15 @@ void main() async {
   // Find references
   final refs = await context.query('refs login');
   print(refs.toText());
+
+  // Load external dependencies (SDK, packages)
+  if (!context.hasDependencies) {
+    await context.loadDependencies();
+  }
+
+  // Query across dependencies
+  final sdkResult = await context.query('find String kind:class lang:Dart');
+  print(sdkResult.toText());
 
   await context.dispose();
 }
@@ -108,8 +118,8 @@ code_context -i
 │  └──────────────┘     └──────────────┘     └────────────┬─────────────┘│
 │                                                         ▼              │
 │  ┌──────────────────────────────────────────────────────────────────┐  │
-│  │                     PackageRegistry                              │  │
-│  │  Local packages (mutable) + External packages (cached)          │  │
+│  │                     LanguageBinding                              │  │
+│  │  Dart (DartBinding) | TypeScript (future) | Python (future)     │  │
 │  └──────────────────────────────────────────────────────────────────┘  │
 │              ┌───────────────────┼───────────────────┐                 │
 │              ▼                   ▼                   ▼                 │
@@ -135,6 +145,14 @@ code_context/
 ├── bin/                  # CLI and MCP server
 └── doc/                  # Documentation
 ```
+
+## Supported Languages
+
+| Language | Status | Binding |
+|----------|--------|---------|
+| Dart | ✅ Full support | `DartBinding` |
+| TypeScript | 🔜 Planned | - |
+| Python | 🔜 Planned | - |
 
 ## Related Projects
 

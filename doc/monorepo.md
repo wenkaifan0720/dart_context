@@ -44,9 +44,11 @@ When opening a directory with multiple packages:
 // Opening a mono repo
 final context = await CodeContext.open('/path/to/monorepo');
 
-// All packages are discovered
-print(context.packages.length);     // e.g., 5 packages
-print(context.packageCount);        // Same as above
+// Register bindings
+CodeContext.registerBinding(DartBinding());
+
+// Opening a mono repo
+final context = await CodeContext.open('/path/to/monorepo');
 
 // Cross-package queries work seamlessly
 final result = await context.query('refs SharedUtils'); // Finds refs in other packages

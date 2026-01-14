@@ -4,17 +4,16 @@ import 'dart:io';
 import 'package:analyzer/dart/analysis/analysis_context_collection.dart';
 import 'package:analyzer/dart/analysis/results.dart';
 import 'package:package_config/package_config.dart';
+// Implementation import needed for constructing an empty PackageConfig.
+// ignore: implementation_imports
+import 'package:package_config/src/package_config_impl.dart'
+    show SimplePackageConfig;
 import 'package:path/path.dart' as p;
 import 'package:pubspec_parse/pubspec_parse.dart';
-import 'package:scip_server/scip_server.dart';
-// ignore: implementation_imports
+import 'package:pub_semver/pub_semver.dart';
 import 'package:scip_dart/scip_dart.dart' as scip_dart;
-// ignore: implementation_imports
-import 'package:scip_dart/src/gen/scip.pb.dart' as scip;
-// ignore: implementation_imports
-import 'package:scip_dart/src/scip_visitor.dart';
-// ignore: implementation_imports
-import 'package:scip_dart/src/version.dart';
+import 'package:scip_dart/scip_dart.dart' as scip;
+import 'package:scip_server/scip_server.dart';
 
 import 'package_registry.dart';
 import 'utils/pubspec_utils.dart';
@@ -56,8 +55,11 @@ class ExternalIndexBuilder {
     await Directory(outputDir).create(recursive: true);
 
     try {
-      // Index using scip_dart library
-      final index = await _indexDirectory(sdkPath);
+      // Index the SDK using a synthetic package config + pubspec
+      // The Dart SDK is not a pub package, so _indexDirectory (which expects
+      // pubspec/package_config) returns null. Build a minimal in-memory config
+      // and reuse the scip_dart indexer directly.
+      final index = await _indexSdkWithSyntheticConfig(sdkPath, sdkVersion);
       if (index == null) {
         return IndexResult.failure('Failed to index SDK');
       }
@@ -90,9 +92,93 @@ class ExternalIndexBuilder {
           'files': loadedIndex.stats['files'] ?? 0,
         },
       );
-    } catch (e) {
-      return IndexResult.failure('Failed to index SDK: $e');
+    } catch (e, stack) {
+      return IndexResult.failure('Failed to index SDK: $e\n$stack');
     }
+  }
+
+  /// Index the SDK by analyzing SDK lib/ directory.
+  ///
+  /// The analyzer's sdkPath parameter allows it to properly analyze SDK sources,
+  /// including all part files automatically.
+  Future<scip.Index?> _indexSdkWithSyntheticConfig(
+    String sdkPath,
+    String sdkVersion,
+  ) async {
+    final sdkLibDir = p.join(sdkPath, 'lib');
+    if (!await Directory(sdkLibDir).exists()) {
+      return null;
+    }
+
+    // Minimal package config so ScipVisitor treats SDK files as local.
+    final packageConfig = SimplePackageConfig(
+      PackageConfig.maxVersion,
+      [
+        Package(
+          'dart-sdk',
+          Uri.directory(sdkPath),
+          packageUriRoot: Uri.directory(sdkLibDir),
+        ),
+      ],
+    );
+    final pubspec = Pubspec(
+      'dart-sdk',
+      version: Version.parse(sdkVersion),
+    );
+
+    final metadata = scip.Metadata(
+      projectRoot: Uri.file(sdkPath).toString(),
+      textDocumentEncoding: scip.TextEncoding.UTF8,
+      toolInfo: scip.ToolInfo(
+        name: 'scip-dart',
+        version: scip_dart.scipDartVersion,
+        arguments: const [],
+      ),
+    );
+
+    scip_dart.globalExternalSymbols.clear();
+
+    // Let the analyzer discover all SDK files (including part files).
+    final collection = AnalysisContextCollection(
+      includedPaths: [sdkLibDir],
+      sdkPath: sdkPath,
+    );
+
+    final context = collection.contextFor(sdkLibDir);
+    final resolvedUnitFutures = context.contextRoot
+        .analyzedFiles()
+        .where((f) => f.endsWith('.dart'))
+        .map(context.currentSession.getResolvedUnit);
+
+    final resolvedUnits = await Future.wait(resolvedUnitFutures);
+
+    final documents =
+        resolvedUnits.whereType<ResolvedUnitResult>().map((resUnit) {
+      final relativePath = p.relative(resUnit.path, from: sdkPath);
+
+      final visitor = scip_dart.ScipVisitor(
+        relativePath,
+        sdkPath,
+        resUnit.lineInfo,
+        resUnit.errors,
+        packageConfig,
+        pubspec,
+      );
+      resUnit.unit.accept(visitor);
+
+      return scip.Document(
+        language: scip.Language.Dart.name,
+        relativePath: relativePath,
+        occurrences: visitor.occurrences,
+        symbols: visitor.symbols,
+      );
+    }).toList();
+
+    return scip.Index(
+      metadata: metadata,
+      documents: documents,
+      externalSymbols: scip_dart.globalExternalSymbols,
+    );
   }
 
   /// Index a pub package.
@@ -208,7 +294,7 @@ class ExternalIndexBuilder {
   /// package root.
   Future<scip.Index?> _indexDirectory(String path) async {
     // Clear global state from previous indexing runs to prevent accumulation
-    globalExternalSymbols.clear();
+    scip_dart.globalExternalSymbols.clear();
 
     // Ensure we have an absolute path
     final absPath = Directory(path).absolute.path;
@@ -256,7 +342,7 @@ class ExternalIndexBuilder {
       textDocumentEncoding: scip.TextEncoding.UTF8,
       toolInfo: scip.ToolInfo(
         name: 'scip-dart',
-        version: scipDartVersion,
+        version: scip_dart.scipDartVersion,
         arguments: [],
       ),
     );
@@ -289,7 +375,7 @@ class ExternalIndexBuilder {
       // Make path relative to package root (not lib)
       final relativePath = p.relative(resUnit.path, from: dirPath);
 
-      final visitor = ScipVisitor(
+      final visitor = scip_dart.ScipVisitor(
         relativePath,
         dirPath,
         resUnit.lineInfo,
@@ -310,7 +396,7 @@ class ExternalIndexBuilder {
     return scip.Index(
       metadata: metadata,
       documents: documents,
-      externalSymbols: globalExternalSymbols,
+      externalSymbols: scip_dart.globalExternalSymbols,
     );
   }
 
@@ -318,7 +404,9 @@ class ExternalIndexBuilder {
   ///
   /// This is used for packages in pub cache that don't have package_config.json.
   PackageConfig _createSyntheticPackageConfig(
-      String packagePath, String packageName,) {
+    String packagePath,
+    String packageName,
+  ) {
     // Use absolute file:// URI for the package root
     final packageUri = Uri.file('$packagePath/');
     return PackageConfig([
@@ -371,12 +459,14 @@ class ExternalIndexBuilder {
       // Skip if already indexed (unless forcing)
       if (!forceReindex &&
           await _registry.hasHostedIndex(pkg.name, pkg.version)) {
-        skippedResults.add(PackageIndexResult(
-          name: pkg.name,
-          version: pkg.version,
-          skipped: true,
-          reason: 'already indexed',
-        ),);
+        skippedResults.add(
+          PackageIndexResult(
+            name: pkg.name,
+            version: pkg.version,
+            skipped: true,
+            reason: 'already indexed',
+          ),
+        );
         continue;
       }
 
@@ -384,12 +474,14 @@ class ExternalIndexBuilder {
       final packagePath =
           '$pubCachePath/hosted/pub.dev/${pkg.name}-${pkg.version}';
       if (!await Directory(packagePath).exists()) {
-        skippedResults.add(PackageIndexResult(
-          name: pkg.name,
-          version: pkg.version,
-          skipped: true,
-          reason: 'not found in pub cache',
-        ),);
+        skippedResults.add(
+          PackageIndexResult(
+            name: pkg.name,
+            version: pkg.version,
+            skipped: true,
+            reason: 'not found in pub cache',
+          ),
+        );
         continue;
       }
 
@@ -397,7 +489,8 @@ class ExternalIndexBuilder {
     }
 
     onProgress?.call(
-        'Indexing ${toIndex.length} packages (${skippedResults.length} skipped)...',);
+      'Indexing ${toIndex.length} packages (${skippedResults.length} skipped)...',
+    );
 
     // Process packages in parallel with concurrency limit
     final indexedResults = <PackageIndexResult>[];
@@ -493,12 +586,14 @@ class ExternalIndexBuilder {
       final pkgPath = '$packagesPath/$pkgName';
       if (!await Directory(pkgPath).exists()) {
         onProgress?.call('Skipping $pkgName (not found)');
-        results.add(PackageIndexResult(
-          name: pkgName,
-          version: version,
-          skipped: true,
-          reason: 'not found',
-        ),);
+        results.add(
+          PackageIndexResult(
+            name: pkgName,
+            version: version,
+            skipped: true,
+            reason: 'not found',
+          ),
+        );
         continue;
       }
 
@@ -513,11 +608,13 @@ class ExternalIndexBuilder {
         );
         if (result.exitCode != 0) {
           onProgress?.call('Failed to get dependencies for $pkgName');
-          results.add(PackageIndexResult(
-            name: pkgName,
-            version: version,
-            error: 'pub get failed',
-          ),);
+          results.add(
+            PackageIndexResult(
+              name: pkgName,
+              version: version,
+              error: 'pub get failed',
+            ),
+          );
           continue;
         }
       }
@@ -527,19 +624,23 @@ class ExternalIndexBuilder {
 
       if (result.success) {
         onProgress?.call('$pkgName: ${result.stats?['symbols']} symbols');
-        results.add(PackageIndexResult(
-          name: pkgName,
-          version: version,
-          success: true,
-          symbolCount: result.stats?['symbols'] as int?,
-        ),);
+        results.add(
+          PackageIndexResult(
+            name: pkgName,
+            version: version,
+            success: true,
+            symbolCount: result.stats?['symbols'] as int?,
+          ),
+        );
       } else {
         onProgress?.call('$pkgName: failed - ${result.error}');
-        results.add(PackageIndexResult(
-          name: pkgName,
-          version: version,
-          error: result.error,
-        ),);
+        results.add(
+          PackageIndexResult(
+            name: pkgName,
+            version: version,
+            error: result.error,
+          ),
+        );
       }
     }
 

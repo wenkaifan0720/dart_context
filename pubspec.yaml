@@ -7,8 +7,15 @@ environment:
 
 # Pub workspace configuration
 workspace:
+  - packages/scip_dart
   - packages/scip_server
   - packages/dart_binding
+
+# CLI executables
+executables:
+  code_context: code_context
+  scip_server: scip_server
+  mcp_server: mcp_server
 
 dependencies:
   # Workspace packages
@@ -16,7 +23,7 @@ dependencies:
   dart_binding:
 
   # MCP server support
-  dart_mcp: ^0.3.3
+  dart_mcp: ^0.4.0
   
   # Utilities
   path: ^1.8.0

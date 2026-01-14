@@ -1,17 +1,17 @@
 #!/usr/bin/env dart
 
-/// SCIP Protocol Server for Dart.
+/// SCIP Protocol Server.
 ///
-/// A JSON-RPC 2.0 server that provides semantic code intelligence for Dart projects.
+/// A JSON-RPC 2.0 server that provides semantic code intelligence.
 ///
 /// ## Usage
 ///
 /// ```bash
 /// # Run over stdio (default)
-/// dart run dart_context:scip_server
+/// dart run code_context:scip_server
 ///
 /// # Run as TCP server
-/// dart run dart_context:scip_server --tcp --port 3333
+/// dart run code_context:scip_server --tcp --port 3333
 /// ```
 ///
 /// ## Protocol
@@ -20,7 +20,7 @@
 ///
 /// ### Methods
 ///
-/// - `initialize` - Initialize a Dart project
+/// - `initialize` - Initialize a project
 ///   - params: `{ rootPath: string, languageId: "dart", useCache?: boolean }`
 ///   - result: `{ success: boolean, projectName: string, fileCount: int, symbolCount: int }`
 ///
@@ -65,10 +65,10 @@ void main(List<String> args) async {
   final help = args.contains('--help') || args.contains('-h');
 
   if (help) {
-    print('''
-SCIP Protocol Server for Dart
+    stderr.writeln('''
+SCIP Protocol Server
 
-Usage: dart run dart_context:scip_server [options]
+Usage: dart run code_context:scip_server [options]
 
 Options:
   --tcp           Run as TCP server (default: stdio)
@@ -80,7 +80,7 @@ Protocol:
   The server communicates using JSON-RPC 2.0 over newline-delimited JSON.
   
   Methods:
-    initialize     Initialize a Dart project
+    initialize     Initialize a project
     query          Execute a DSL query
     status         Get index status
     shutdown       Graceful shutdown
@@ -89,10 +89,10 @@ Protocol:
 
 Example:
   # Start server over stdio
-  dart run dart_context:scip_server
+  dart run code_context:scip_server
 
   # Start TCP server on port 3333
-  dart run dart_context:scip_server --tcp --port 3333
+  dart run code_context:scip_server --tcp --port 3333
 ''');
     return;
   }
@@ -110,7 +110,9 @@ Example:
 
   if (isTcp) {
     final socket = await server.serveTcp(port: port, host: host);
-    stderr.writeln('SCIP Server for Dart listening on ${socket.address.host}:${socket.port}');
+    stderr.writeln(
+      'SCIP Server listening on ${socket.address.host}:${socket.port}',
+    );
     stderr.writeln('Send JSON-RPC 2.0 messages (one per line)');
     stderr.writeln('Press Ctrl+C to stop.');
 
@@ -121,9 +123,8 @@ Example:
       exit(0);
     });
   } else {
-    stderr.writeln('SCIP Server for Dart running over stdio');
+    stderr.writeln('SCIP Server running over stdio');
     stderr.writeln('Send JSON-RPC 2.0 messages to stdin (one per line)');
     await server.serveStdio();
   }
 }
-

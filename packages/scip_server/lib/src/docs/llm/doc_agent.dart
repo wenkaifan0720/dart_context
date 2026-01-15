@@ -147,7 +147,7 @@ For large folders, sample representative files rather than reading everything.
 
 UNIQUE CAPABILITIES:
 - You can read existing docs from subfolders and synthesize higher-level overviews
-- Link to subfolder docs (include README.md): [components/](components/README.md)
+- Link to subfolder docs: [Components](doc://lib/src/components)
 - Link to code with smart symbols: [ClassName](scip://path/to/file.dart/ClassName#)
 
 Write the documentation in markdown.

@@ -366,7 +366,7 @@ For folders, use list_folder first, then call this on interesting files.
 
   Future<String> _handleReadSubfolderDoc(Map<String, dynamic> args) async {
     final relativePath = args['path'] as String;
-    final docPath = p.join(docsPath, 'folders', relativePath, 'index.md');
+    final docPath = p.join(docsPath, 'folders', relativePath, 'README.md');
     final file = File(docPath);
 
     if (!file.existsSync()) {
@@ -437,7 +437,7 @@ $content
   // ===== Helpers =====
 
   bool _hasDocumentation(String relativePath) {
-    final docPath = p.join(docsPath, 'folders', relativePath, 'index.md');
+    final docPath = p.join(docsPath, 'folders', relativePath, 'README.md');
     return File(docPath).existsSync();
   }
 

@@ -71,6 +71,18 @@ class LinkTransformer {
     multiLine: true,
   );
 
+  /// Pattern to match doc:// links for subfolder documentation.
+  ///
+  /// Matches:
+  /// - `[label](doc://lib/src/components)`
+  /// - `[Components](doc://lib/src/components)`
+  ///
+  /// Transforms to relative README.md paths.
+  static final _docLinkPattern = RegExp(
+    r'\[([^\]]+)\]\(doc://([^)]+)\)',
+    multiLine: true,
+  );
+
   /// Transform a source doc to rendered doc.
   ///
   /// Replaces all `scip://` URIs with navigable links based on the
@@ -109,8 +121,61 @@ class LinkTransformer {
       }
     });
 
+    // Transform doc:// links to relative README.md paths
+    result = result.replaceAllMapped(_docLinkPattern, (match) {
+      final label = match.group(1)!;
+      final targetFolder = match.group(2)!;
+
+      // Compute relative path from current doc to target doc
+      final resolved =
+          _resolveDocLink(targetFolder, docPath: docPath);
+      return '[$label]($resolved)';
+    });
+
+    // Finally, fix folder doc links (add README.md to links ending with /)
+    result = result.replaceAllMapped(_folderLinkPattern, (match) {
+      final label = match.group(1)!;
+      final path = match.group(2)!;
+      // Add ./ prefix for IDE compatibility if not already present
+      final prefix = path.startsWith('.') || path.startsWith('/') ? '' : './';
+      return '[$label]($prefix${path}README.md)';
+    });
+
     return result;
   }
+
+  /// Resolve a doc:// link to a relative path.
+  ///
+  /// [targetFolder] is the folder path from doc:// URI (e.g., "lib/src/components")
+  /// [docPath] is the current doc's path (e.g., ".dart_context/docs/rendered/folders/lib/README.md")
+  String _resolveDocLink(String targetFolder, {String? docPath}) {
+    if (docPath == null) {
+      // No current doc path, just return simple path
+      return '$targetFolder/README.md';
+    }
+
+    // docPath is like: .dart_context/docs/rendered/folders/lib/README.md
+    // targetFolder is like: lib/core
+    // Target doc is at: .dart_context/docs/rendered/folders/{targetFolder}/README.md
+    
+    // Get the directory of the current doc
+    final currentDir = p.dirname(docPath);
+    
+    // Prefix targetFolder with the docs folder path to match coordinate space
+    final targetDocPath = '.dart_context/docs/rendered/folders/$targetFolder';
+    
+    // Compute relative path from current doc's folder to target folder
+    final relativePath = p.relative(targetDocPath, from: currentDir);
+    
+    // Add ./ prefix for IDE compatibility (Cursor needs it)
+    if (!relativePath.startsWith('.')) {
+      return './$relativePath/README.md';
+    }
+    return '$relativePath/README.md';
+  }
+
+  /// Pattern to match folder links like [label](path/)
+  static final _folderLinkPattern = RegExp(r'\[([^\]]+)\]\(([^)]+/)\)');
 
   /// Resolve a single scip:// URI to a navigable link.
   ///

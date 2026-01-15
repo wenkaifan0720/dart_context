@@ -834,7 +834,7 @@ class _GoRouteVisitor extends RecursiveAstVisitor<void> {
   @override
   void visitInstanceCreationExpression(InstanceCreationExpression node) {
     // ignore: deprecated_member_use
-    final typeName = node.constructorName.type.name.name;
+    final typeName = node.constructorName.type.name2.lexeme;
 
     if (typeName == 'GoRoute' ||
         typeName == 'ShellRoute' ||
@@ -896,7 +896,7 @@ class _GoRouteVisitor extends RecursiveAstVisitor<void> {
     // Direct: child: const DashboardPage()
     if (expr is InstanceCreationExpression) {
       // ignore: deprecated_member_use
-      return expr.constructorName.type.name.name;
+      return expr.constructorName.type.name2.lexeme;
     }
 
     // pageBuilder: (context, state) { ... child: const DashboardPage() ... }
@@ -932,7 +932,7 @@ class _ChildExtractorVisitor extends RecursiveAstVisitor<void> {
     // (MethodInvocation is used when type info isn't available)
     if (expr is InstanceCreationExpression) {
       // ignore: deprecated_member_use
-      return expr.constructorName.type.name.name;
+      return expr.constructorName.type.name2.lexeme;
     } else if (expr is MethodInvocation) {
       // Screen() looks like a method call without type info
       final name = expr.methodName.name;
@@ -964,7 +964,7 @@ class _ScaffoldChecker extends RecursiveAstVisitor<void> {
 
     // Check if this is creating a Scaffold widget
     // ignore: deprecated_member_use
-    final typeName = node.constructorName.type.name.name;
+    final typeName = node.constructorName.type.name2.lexeme;
     if (typeName == 'Scaffold') {
       containsScaffold = true;
       return;

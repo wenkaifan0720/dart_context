@@ -6,6 +6,9 @@ import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 
 void main() {
+  // Register DartBinding for language detection
+  CodeContext.registerBinding(DartBinding());
+
   group('DartContext', () {
     late Directory tempDir;
     late String projectPath;
@@ -55,7 +58,8 @@ void main() {
 
         final defResult = result as DefinitionResult;
         expect(defResult.isEmpty, isFalse);
-        expect(defResult.definitions.first.source, contains('class UserRepository'));
+        expect(defResult.definitions.first.source,
+            contains('class UserRepository'));
 
         // Test toText format
         final text = result.toText();
@@ -95,7 +99,8 @@ void main() {
       });
 
       test('find with path filter', () async {
-        final result = await context.query('find * kind:class in:lib/services/');
+        final result =
+            await context.query('find * kind:class in:lib/services/');
         expect(result, isA<SearchResult>());
 
         final searchResult = result as SearchResult;
@@ -493,4 +498,3 @@ class UserService implements BaseService {
     );
   }
 }
-

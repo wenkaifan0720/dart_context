@@ -4,6 +4,9 @@ import 'package:code_context/code_context.dart';
 import 'package:test/test.dart';
 
 void main() {
+  // Register DartBinding for language detection
+  CodeContext.registerBinding(DartBinding());
+
   group('Signature query', () {
     late Directory tempDir;
     late CodeContext context;
@@ -154,11 +157,12 @@ void initialize() {
       expect(sig, contains('class AuthService'));
 
       // Should indicate this is a class (either with full body or stub)
-      expect(sig, anyOf(
-        contains('{'),
-        contains('{ ... }'),
-      ));
+      expect(
+          sig,
+          anyOf(
+            contains('{'),
+            contains('{ ... }'),
+          ));
     });
   });
 }
-

@@ -101,12 +101,12 @@ class SymbolGenerator {
       if (element?.isSynthetic == true && element is PropertyAccessorElement) {
         // The values field on enums is synthetic, and has no explicit definition like
         // other fields do. Skip indexing for this case.
-        if (element.enclosingElement is EnumElement &&
+        if (element.enclosingElement3 is EnumElement &&
             element.name == 'values') {
           return null;
         }
 
-        element = element.variable;
+        element = element.variable2;
       }
 
       // element is null if there's nothing really to do for this node. Example: `void`
@@ -251,14 +251,14 @@ class SymbolGenerator {
     }
 
     if (element is ConstructorElement) {
-      final className = element.enclosingElement.name;
+      final className = element.enclosingElement3?.name;
       final constructorName =
           element.name.isNotEmpty ? element.name : '`<constructor>`';
       return '$namespace/$className#$constructorName().';
     }
 
     if (element is MethodElement) {
-      final className = element.enclosingElement.name;
+      final className = element.enclosingElement3?.name;
       return '$namespace/$className#${element.name}().';
     }
 
@@ -271,14 +271,14 @@ class SymbolGenerator {
     }
 
     if (element is TypeParameterElement) {
-      final encEle = element.enclosingElement;
+      final encEle = element.enclosingElement3;
       if (encEle == null) return '$namespace/[${element.name}]';
       return '${_getDescriptor(encEle)}[${element.name}]';
     }
 
     // only generate symbols for named parameters, all others are 'local x'
     if (element is ParameterElement && element.isNamed) {
-      final encEle = element.enclosingElement;
+      final encEle = element.enclosingElement3;
       if (encEle == null) {
         display('Parameter element has null enclosingElement "$element"');
         return null;
@@ -293,7 +293,7 @@ class SymbolGenerator {
     }
 
     if (element is PropertyAccessorElement) {
-      final parentName = element.enclosingElement.name;
+      final parentName = element.enclosingElement3?.name;
 
       var prefix = '';
       if (element.isGetter) {
@@ -302,15 +302,16 @@ class SymbolGenerator {
         prefix = '<set>';
       }
 
+      final variableName = element.variable2?.name ?? element.name;
       return [
         '$namespace/',
         if (parentName != null) '$parentName#',
-        '`$prefix${element.variable.name}`.',
+        '`$prefix$variableName`.',
       ].join();
     }
 
     if (element is FieldElement) {
-      final encEle = element.enclosingElement;
+      final encEle = element.enclosingElement3;
       return '${_getDescriptor(encEle)}${element.name}.';
     }
 
@@ -344,8 +345,8 @@ class SymbolGenerator {
   }
 
   String _pathForSdkElement(Element element) {
-    if (element.enclosingElement?.source?.uri != null) {
-      return element.enclosingElement!.source!.uri.toString();
+    if (element.enclosingElement3?.source?.uri != null) {
+      return element.enclosingElement3!.source!.uri.toString();
     } else {
       throw Exception(
           'Unable to find path to dart sdk element: ${element.source!.fullName}');

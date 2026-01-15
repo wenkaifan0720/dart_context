@@ -5,6 +5,9 @@ import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 
 void main() {
+  // Register DartBinding for language detection
+  CodeContext.registerBinding(DartBinding());
+
   group('IncrementalScipIndexer', () {
     late Directory tempDir;
     late String projectPath;
@@ -273,7 +276,7 @@ class UpdatedClass {
           // Delete the file - the index should detect this on refresh
           await tempFile.delete();
 
-          // Note: refreshAll only re-indexes existing files, it doesn't 
+          // Note: refreshAll only re-indexes existing files, it doesn't
           // automatically detect deletions. The file watcher would handle
           // this in real usage. For now, just verify the file was indexed.
           // A full implementation would need explicit delete handling.
@@ -486,4 +489,3 @@ class ScientificCalculator extends Calculator {
     );
   }
 }
-

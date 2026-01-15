@@ -90,8 +90,11 @@ class SignatureVisitor extends ToSourceVisitor {
     sink.write('extension ');
     _visitToken(node.name);
     _visitNode(node.typeParameters);
-    sink.write(' on ');
-    node.extendedType.accept(this);
+    final extendedType = node.onClause?.extendedType;
+    if (extendedType != null) {
+      sink.write(' on ');
+      extendedType.accept(this);
+    }
     sink.write(' {\n');
     _visitMemberList(node.members);
     sink.write('}');

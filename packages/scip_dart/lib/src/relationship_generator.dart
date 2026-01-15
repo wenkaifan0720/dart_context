@@ -45,16 +45,18 @@ List<Relationship>? relationshipsFor(
     } else if (element is FieldElement) {
       referencingElements = parentElement.allSupertypes
           .expand((type) => type.accessors)
-          .map((acc) => acc.variable)
+          .map((acc) => acc.variable2)
+          .whereType<PropertyInducingElement>()
           .where((variable) => variable.name == element.name)
           .toSet(); // remove any duplicates caused from synthetic getters/setters
     }
     if (element is PropertyAccessorElement) {
+      final elementVarName = element.variable2?.name;
       referencingElements = parentElement.allSupertypes
           .expand((type) => type.accessors)
           .where((acc) => acc.isSetter == element.isSetter)
           .where((acc) => acc.isGetter == element.isGetter)
-          .where((acc) => acc.variable.name == element.variable.name);
+          .where((acc) => acc.variable2?.name == elementVarName);
     }
 
     return referencingElements

@@ -1,0 +1,16 @@
+name: sample_flutter_app
+description: A sample Flutter app for testing code_context.
+version: 1.0.0
+
+environment:
+  sdk: ^3.0.0
+  flutter: ">=3.10.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0

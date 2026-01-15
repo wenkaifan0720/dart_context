@@ -1,0 +1,7 @@
+# Override root .gitignore to track pubspec.lock for reproducible tests
+!pubspec.lock
+
+# Still ignore generated directories
+.dart_tool/
+.dart_context/
+build/

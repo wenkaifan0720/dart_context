@@ -146,7 +146,7 @@ class MyClass {
     group('Real Query Execution', () {
       // Note: These tests use the default root (set during init) rather than
       // an explicit project path, because the MCP root matching uses URI comparison.
-      
+
       test('dart_query stats returns index statistics', () async {
         final result = await env.callTool('dart_query', {
           'query': 'stats',
@@ -172,7 +172,8 @@ class MyClass {
       });
 
       test('dart_query def finds definition', () async {
-        final result = await env.callTool('dart_query', {'query': 'def MyClass'});
+        final result =
+            await env.callTool('dart_query', {'query': 'def MyClass'});
 
         if (result.isError == true) {
           fail('Query failed: ${result.textContent}');
@@ -182,7 +183,8 @@ class MyClass {
       });
 
       test('dart_query members returns class members', () async {
-        final result = await env.callTool('dart_query', {'query': 'members MyClass'});
+        final result =
+            await env.callTool('dart_query', {'query': 'members MyClass'});
 
         if (result.isError == true) {
           fail('Query failed: ${result.textContent}');
@@ -191,7 +193,8 @@ class MyClass {
       });
 
       test('dart_query source returns source code', () async {
-        final result = await env.callTool('dart_query', {'query': 'source MyClass'});
+        final result =
+            await env.callTool('dart_query', {'query': 'source MyClass'});
 
         if (result.isError == true) {
           fail('Query failed: ${result.textContent}');
@@ -201,7 +204,8 @@ class MyClass {
       });
 
       test('dart_query grep finds text in source', () async {
-        final result = await env.callTool('dart_query', {'query': 'grep Hello'});
+        final result =
+            await env.callTool('dart_query', {'query': 'grep Hello'});
 
         if (result.isError == true) {
           fail('Query failed: ${result.textContent}');
@@ -210,7 +214,8 @@ class MyClass {
       });
 
       test('dart_query which shows disambiguation', () async {
-        final result = await env.callTool('dart_query', {'query': 'which main'});
+        final result =
+            await env.callTool('dart_query', {'query': 'which main'});
 
         if (result.isError == true) {
           fail('Query failed: ${result.textContent}');
@@ -219,14 +224,16 @@ class MyClass {
       });
 
       test('dart_query impls returns implementations', () async {
-        final result = await env.callTool('dart_query', {'query': 'impls MyClass'});
+        final result =
+            await env.callTool('dart_query', {'query': 'impls MyClass'});
 
         // May be empty if no implementations exist
         expect(result.isError, isNot(true));
       });
 
       test('dart_query hierarchy returns type hierarchy', () async {
-        final result = await env.callTool('dart_query', {'query': 'hierarchy MyClass'});
+        final result =
+            await env.callTool('dart_query', {'query': 'hierarchy MyClass'});
 
         // Returns hierarchy info
         expect(result.isError, isNot(true));
@@ -347,7 +354,11 @@ base class TestMCPClient extends MCPClient with RootsSupport {
 
 /// Test MCP server with CodeContextSupport.
 base class TestDartContextServer extends MCPServer
-    with LoggingSupport, ToolsSupport, RootsTrackingSupport, CodeContextSupport {
+    with
+        LoggingSupport,
+        ToolsSupport,
+        RootsTrackingSupport,
+        CodeContextSupport {
   TestDartContextServer(super.channel)
       : super.fromStreamChannel(
           implementation: Implementation(

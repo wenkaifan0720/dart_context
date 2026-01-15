@@ -1,11 +1,10 @@
 import 'dart:io';
 
 import 'package:code_context/code_context.dart';
-import 'package:dart_binding/dart_binding.dart' show DartBinding;
 import 'package:test/test.dart';
 
 void main() {
-  // Register binding for auto-detection
+  // Register DartBinding for language detection
   CodeContext.registerBinding(DartBinding());
 
   group('Signature query', () {
@@ -158,11 +157,12 @@ void initialize() {
       expect(sig, contains('class AuthService'));
 
       // Should indicate this is a class (either with full body or stub)
-      expect(sig, anyOf(
-        contains('{'),
-        contains('{ ... }'),
-      ));
+      expect(
+          sig,
+          anyOf(
+            contains('{'),
+            contains('{ ... }'),
+          ));
     });
   });
 }
-

@@ -1,13 +1,11 @@
 import 'dart:io';
 
-import 'package:code_context/code_context.dart' hide IndexUpdate;
-import 'package:dart_binding/dart_binding.dart' show DartBinding;
+import 'package:code_context/code_context.dart';
 import 'package:path/path.dart' as p;
-import 'package:scip_server/scip_server.dart' show IndexUpdate;
 import 'package:test/test.dart';
 
 void main() {
-  // Register binding for auto-detection
+  // Register DartBinding for language detection
   CodeContext.registerBinding(DartBinding());
 
   group('IncrementalScipIndexer', () {
@@ -278,7 +276,7 @@ class UpdatedClass {
           // Delete the file - the index should detect this on refresh
           await tempFile.delete();
 
-          // Note: refreshAll only re-indexes existing files, it doesn't 
+          // Note: refreshAll only re-indexes existing files, it doesn't
           // automatically detect deletions. The file watcher would handle
           // this in real usage. For now, just verify the file was indexed.
           // A full implementation would need explicit delete handling.
@@ -491,4 +489,3 @@ class ScientificCalculator extends Calculator {
     );
   }
 }
-

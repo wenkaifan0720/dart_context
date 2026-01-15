@@ -15,7 +15,7 @@ dependencies:
     path: ../scip_dart
   
   # SCIP protobuf bindings
-  protobuf: ^3.1.0
+  protobuf: ^4.0.0
   
   # Dart analyzer for incremental analysis
   analyzer: ^7.7.0

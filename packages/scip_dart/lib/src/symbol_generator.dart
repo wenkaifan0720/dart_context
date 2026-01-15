@@ -187,8 +187,21 @@ class SymbolGenerator {
       return 'pub $packageName $packageVersion';
     }
 
-    final package =
-        _packageConfig.packageOf(Uri.file(element.source!.fullName));
+    final sourcePath = element.source!.fullName;
+    final Package? package;
+
+    // When using library summaries (e.g., HologramAnalyzer with Flutter SDK),
+    // fullName may return a package URI instead of an absolute file path.
+    if (sourcePath.startsWith('package:')) {
+      final uri = Uri.parse(sourcePath);
+      final packageName = uri.pathSegments.first;
+      package = _packageConfig.packages
+          .cast<Package?>()
+          .firstWhere((p) => p?.name == packageName, orElse: () => null);
+    } else {
+      package = _packageConfig.packageOf(Uri.file(sourcePath));
+    }
+
     if (package == null) {
       // this should only happen if the source references a package that is not defined
       // in the pubspec (as a main or transitive dep)
@@ -233,6 +246,28 @@ class SymbolGenerator {
     String filePath;
     if (_isInSdk(element)) {
       filePath = _pathForSdkElement(element);
+    } else if (sourcePath.startsWith('package:')) {
+      // Handle package URIs (occurs when using library summaries, e.g.,
+      // HologramAnalyzer with Flutter SDK). The fullName returns something like
+      // "package:flutter/src/widgets/binding.dart" instead of an absolute path.
+      final uri = Uri.parse(sourcePath);
+      final packageName = uri.pathSegments.first;
+      final package = _packageConfig.packages
+          .cast<Package?>()
+          .firstWhere((p) => p?.name == packageName, orElse: () => null);
+
+      if (package == null) {
+        throw Exception(
+            'Could not find package for $sourcePath. Have you run pub get?');
+      }
+
+      // Resolve the package URI to an absolute file path using packageUriRoot
+      // (which typically points to the lib/ directory)
+      final pathWithinPackage = uri.pathSegments.skip(1).join('/');
+      final resolvedPath =
+          package.packageUriRoot.resolve(pathWithinPackage).toFilePath();
+      // Get relative path by stripping the package root
+      filePath = resolvedPath.substring(package.root.toFilePath().length);
     } else {
       final config = _packageConfig.packageOf(Uri.file(sourcePath));
       if (config == null) {

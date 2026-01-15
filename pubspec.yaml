@@ -20,7 +20,9 @@ executables:
 dependencies:
   # Workspace packages
   scip_server:
+    path: packages/scip_server
   dart_binding:
+    path: packages/dart_binding
 
   # MCP server support
   dart_mcp: ^0.4.0

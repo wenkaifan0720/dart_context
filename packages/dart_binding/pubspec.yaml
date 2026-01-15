@@ -11,6 +11,7 @@ resolution: workspace
 dependencies:
   # Workspace dependencies
   scip_server:
+    path: ../scip_server
   scip_dart:
     path: ../scip_dart
   

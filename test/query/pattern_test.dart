@@ -245,18 +245,6 @@ void main() {
       );
     });
 
-    test('caseInsensitive flag affects pattern', () {
-      final query = ScipQuery.parse('grep pattern -i');
-      expect(query.caseInsensitive, isTrue);
-      expect(query.parsedPattern.caseSensitive, isFalse);
-    });
-
-    test('contextLines parses correctly', () {
-      expect(ScipQuery.parse('grep pattern').contextLines, 2); // Default
-      expect(ScipQuery.parse('grep pattern -C:5').contextLines, 5);
-      expect(ScipQuery.parse('grep pattern context:3').contextLines, 3);
-    });
-
     test('isQualified returns false for regex patterns', () {
       expect(ScipQuery.parse('refs /Class.method/').isQualified, isFalse);
       expect(ScipQuery.parse('refs Class.method').isQualified, isTrue);

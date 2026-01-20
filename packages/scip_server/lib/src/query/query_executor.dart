@@ -124,7 +124,12 @@ class QueryExecutor {
     // Parse the next action
     final tokens = queryPart.split(' ');
     final actionStr = tokens.first.toLowerCase();
-    
+
+    // Special handling for 'find' in pipe context - filter symbols instead of global search
+    if (actionStr == 'find' || actionStr == 'search') {
+      return _filterPipedSymbols(symbols, tokens.skip(1).toList());
+    }
+
     // Parse action
     final action = _parseAction(actionStr);
     if (action == null) {
@@ -152,21 +157,75 @@ class QueryExecutor {
     return _mergeResults(results, actionStr);
   }
 
+  /// Filter piped symbols by pattern and filters.
+  ///
+  /// Used when `find` is called in a pipe context to filter incoming symbols
+  /// rather than performing a global search.
+  ///
+  /// Example: `members AppSpacing | find padding* kind:field`
+  QueryResult _filterPipedSymbols(List<SymbolInfo> symbols, List<String> args) {
+    if (args.isEmpty) {
+      return SearchResult(symbols);
+    }
+
+    // Parse pattern and filters from args
+    String? patternStr;
+    String? kindFilter;
+    String? pathFilter;
+
+    for (final arg in args) {
+      if (arg.startsWith('kind:')) {
+        kindFilter = arg.substring(5).toLowerCase();
+      } else if (arg.startsWith('in:')) {
+        pathFilter = arg.substring(3);
+      } else if (patternStr == null && !arg.startsWith('-')) {
+        patternStr = arg;
+      }
+    }
+
+    // Parse the pattern
+    final pattern = patternStr != null ? ParsedPattern.parse(patternStr) : null;
+
+    // Filter symbols
+    final filtered = symbols.where((sym) {
+      // Match pattern against name
+      if (pattern != null && !pattern.matches(sym.name)) {
+        return false;
+      }
+
+      // Match kind filter
+      if (kindFilter != null && sym.kindString.toLowerCase() != kindFilter) {
+        return false;
+      }
+
+      // Match path filter
+      if (pathFilter != null &&
+          sym.file != null &&
+          !sym.file!.startsWith(pathFilter)) {
+        return false;
+      }
+
+      return true;
+    }).toList();
+
+    if (filtered.isEmpty) {
+      return NotFoundResult('No symbols match filter');
+    }
+
+    return SearchResult(filtered);
+  }
+
   /// Parse action string, returning null if unknown.
   QueryAction? _parseAction(String action) {
     return switch (action) {
       'def' || 'definition' => QueryAction.definition,
       'refs' || 'references' => QueryAction.references,
       'members' => QueryAction.members,
-      'impls' || 'implementations' => QueryAction.implementations,
-      'supertypes' || 'super' => QueryAction.supertypes,
-      'subtypes' || 'sub' => QueryAction.subtypes,
       'hierarchy' => QueryAction.hierarchy,
       'source' || 'src' => QueryAction.source,
       'sig' || 'signature' => QueryAction.signature,
       'calls' || 'callees' => QueryAction.calls,
       'callers' || 'calledby' => QueryAction.callers,
-      'deps' || 'dependencies' => QueryAction.deps,
       _ => null,
     };
   }
@@ -181,16 +240,13 @@ class QueryExecutor {
       QueryAction.definition => _definitionForSymbol(sym),
       QueryAction.references => _refsForSingleSymbol(sym),
       QueryAction.members => _membersForSymbol(sym),
-      QueryAction.implementations => _implementationsForSymbol(sym),
-      QueryAction.supertypes => _supertypesForSymbol(sym),
-      QueryAction.subtypes => _subtypesForSymbol(sym),
       QueryAction.hierarchy => _hierarchyForSymbol(sym),
       QueryAction.source => _sourceForSymbol(sym),
       QueryAction.signature => _signatureForSymbol(sym),
       QueryAction.calls => _callsForSymbol(sym),
       QueryAction.callers => _callersForSymbol(sym),
-      QueryAction.deps => _depsForSymbol(sym),
-      _ => null, // Actions like find, grep, files, stats don't take symbol input
+      _ =>
+        null, // Actions like find, grep, files, stats don't take symbol input
     };
   }
 
@@ -241,50 +297,10 @@ class QueryExecutor {
         : index.membersOf(sym.symbol).toList();
 
     // Filter out parameters - they are indexed as children but aren't class members
-    final members = allMembers
-        .where((m) => m.kindString != 'parameter')
-        .toList();
+    final members =
+        allMembers.where((m) => m.kindString != 'parameter').toList();
 
     return MembersResult(symbol: sym, members: members);
-  }
-
-  /// Get implementations for a specific symbol.
-  ///
-  /// Uses [registry] for cross-package lookups when available.
-  Future<QueryResult> _implementationsForSymbol(SymbolInfo sym) async {
-    // Use registry for cross-package lookup if available
-    final impls = provider != null
-        ? provider!.subtypesOf(sym.symbol)
-        : index.findImplementations(sym.symbol).toList();
-    return SearchResult(impls);
-  }
-
-  /// Get supertypes for a specific symbol.
-  /// Uses [registry] for cross-package lookups when available.
-  Future<QueryResult> _supertypesForSymbol(SymbolInfo sym) async {
-    // Use registry for cross-package lookup if available
-    final supertypes = provider != null
-        ? provider!.supertypesOf(sym.symbol)
-        : index.supertypesOf(sym.symbol).toList();
-    return HierarchyResult(
-      symbol: sym,
-      supertypes: supertypes,
-      subtypes: const <SymbolInfo>[],
-    );
-  }
-
-  /// Get subtypes for a specific symbol.
-  /// Uses [registry] for cross-package lookups when available.
-  Future<QueryResult> _subtypesForSymbol(SymbolInfo sym) async {
-    // Use registry for cross-package lookup if available
-    final subtypes = provider != null
-        ? provider!.subtypesOf(sym.symbol)
-        : index.subtypesOf(sym.symbol).toList();
-    return HierarchyResult(
-      symbol: sym,
-      supertypes: const <SymbolInfo>[],
-      subtypes: subtypes,
-    );
   }
 
   /// Get full hierarchy for a specific symbol.
@@ -417,42 +433,6 @@ class QueryExecutor {
     );
   }
 
-  /// Get dependencies for a specific symbol.
-  ///
-  /// Uses [registry] for cross-package call graph when available.
-  Future<QueryResult> _depsForSymbol(SymbolInfo sym) async {
-    final deps = <String, SymbolInfo>{};
-
-    // Get calls from all indexes
-    final calls = provider != null
-        ? provider!.getCalls(sym.symbol)
-        : index.getCalls(sym.symbol).toList();
-
-    for (final called in calls) {
-      deps[called.symbol] = called;
-    }
-
-    if (sym.kind == scip.SymbolInformation_Kind.Class) {
-      final children = index.getChildren(sym.symbol);
-      for (final childId in children) {
-        final childCalls = provider != null
-            ? provider!.getCalls(childId)
-            : index.getCalls(childId).toList();
-        for (final called in childCalls) {
-          deps[called.symbol] = called;
-        }
-      }
-    }
-
-    deps.remove(sym.symbol);
-    deps.removeWhere((id, _) => id.startsWith(sym.symbol));
-
-    return DependenciesResult(
-      symbol: sym,
-      dependencies: deps.values.toList(),
-    );
-  }
-
   /// Extract symbols from a query result.
   List<SymbolInfo> _extractSymbols(QueryResult result) {
     return switch (result) {
@@ -461,11 +441,9 @@ class QueryExecutor {
       MembersResult r => r.members,
       HierarchyResult r => [...r.supertypes, ...r.subtypes],
       CallGraphResult r => [r.symbol, ...r.connections],
-      DependenciesResult r => [r.symbol, ...r.dependencies],
       ReferencesResult r => [r.symbol],
-      AggregatedReferencesResult r => r.symbolRefs.map((sr) => sr.symbol).toList(),
-      WhichResult r => r.matches.map((m) => m.symbol).toList(),
-      GrepResult r => r.symbols, // Symbols containing grep matches
+      AggregatedReferencesResult r =>
+        r.symbolRefs.map((sr) => sr.symbol).toList(),
       ImportsResult r => [...r.importedSymbols, ...r.exportedSymbols],
       _ => <SymbolInfo>[],
     };
@@ -536,22 +514,15 @@ class QueryExecutor {
       QueryAction.definition => _findDefinition(query),
       QueryAction.references => _findReferences(query),
       QueryAction.members => _findMembers(query),
-      QueryAction.implementations => _findImplementations(query),
-      QueryAction.supertypes => _findSupertypes(query),
-      QueryAction.subtypes => _findSubtypes(query),
       QueryAction.hierarchy => _findHierarchy(query),
       QueryAction.source => _getSource(query),
       QueryAction.find => _search(query),
-      QueryAction.which => _which(query),
-      QueryAction.grep => _grep(query),
       QueryAction.calls => _findCalls(query),
       QueryAction.callers => _findCallers(query),
       QueryAction.imports => _findImports(query),
       QueryAction.exports => _findExports(query),
-      QueryAction.deps => _findDeps(query),
       QueryAction.signature => _getSignatureResult(query),
       QueryAction.symbols => _listSymbolsInFile(query),
-      QueryAction.get => _getByScipId(query),
       QueryAction.files => _listFiles(),
       QueryAction.stats => _getStats(),
     };
@@ -585,7 +556,8 @@ class QueryExecutor {
 
       // Prefer project symbols over external when priority ties
       bool isProject(SymbolInfo s) =>
-          provider == null || provider!.projectIndex.getSymbol(s.symbol) != null;
+          provider == null ||
+          provider!.projectIndex.getSymbol(s.symbol) != null;
 
       final sorted = [...symbols];
       sorted.sort((a, b) {
@@ -653,9 +625,8 @@ class QueryExecutor {
       'property',
     };
 
-    final primarySymbols = allSymbols
-        .where((s) => primaryKinds.contains(s.kindString))
-        .toList();
+    final primarySymbols =
+        allSymbols.where((s) => primaryKinds.contains(s.kindString)).toList();
 
     // If we have primary symbols, use those; otherwise fall back to all
     final symbols = primarySymbols.isNotEmpty ? primarySymbols : allSymbols;
@@ -770,7 +741,8 @@ class QueryExecutor {
       // Deduplicate by sourceRoot+file+line
       final seen = <String>{};
       for (final result in results) {
-        final key = '${result.sourceRoot}/${result.ref.file}:${result.ref.line}';
+        final key =
+            '${result.sourceRoot}/${result.ref.file}:${result.ref.line}';
         if (seen.contains(key)) continue;
         seen.add(key);
 
@@ -951,72 +923,12 @@ class QueryExecutor {
         : index.membersOf(sym.symbol).toList();
 
     // Filter out parameters - they are indexed as children but aren't class members
-    final members = allMembers
-        .where((m) => m.kindString != 'parameter')
-        .toList();
+    final members =
+        allMembers.where((m) => m.kindString != 'parameter').toList();
 
     return MembersResult(
       symbol: sym,
       members: members,
-    );
-  }
-
-  /// Find implementations for a symbol.
-  ///
-  /// Uses [registry] for cross-package lookups when available.
-  Future<QueryResult> _findImplementations(ScipQuery query) async {
-    final symbols = _findMatchingSymbols(query);
-
-    if (symbols.isEmpty) {
-      return NotFoundResult('No symbol found matching "${query.target}"');
-    }
-
-    final sym = symbols.first;
-    // Use registry for cross-package lookup if available
-    final impls = provider != null
-        ? provider!.subtypesOf(sym.symbol)
-        : index.findImplementations(sym.symbol).toList();
-
-    return SearchResult(impls);
-  }
-
-  Future<QueryResult> _findSupertypes(ScipQuery query) async {
-    final symbols = _findMatchingSymbols(query);
-
-    if (symbols.isEmpty) {
-      return NotFoundResult('No symbol found matching "${query.target}"');
-    }
-
-    final sym = symbols.first;
-    // Use registry for cross-package lookup if available
-    final supertypes = provider != null
-        ? provider!.supertypesOf(sym.symbol)
-        : index.supertypesOf(sym.symbol).toList();
-
-    return HierarchyResult(
-      symbol: sym,
-      supertypes: supertypes,
-      subtypes: const <SymbolInfo>[],
-    );
-  }
-
-  Future<QueryResult> _findSubtypes(ScipQuery query) async {
-    final symbols = _findMatchingSymbols(query);
-
-    if (symbols.isEmpty) {
-      return NotFoundResult('No symbol found matching "${query.target}"');
-    }
-
-    final sym = symbols.first;
-    // Use registry for cross-package lookup if available
-    final subtypes = provider != null
-        ? provider!.subtypesOf(sym.symbol)
-        : index.subtypesOf(sym.symbol).toList();
-
-    return HierarchyResult(
-      symbol: sym,
-      supertypes: const <SymbolInfo>[],
-      subtypes: subtypes,
     );
   }
 
@@ -1125,7 +1037,8 @@ class QueryExecutor {
     signature ??= await _extractSignatureFromSource(sym, def);
 
     if (signature == null) {
-      return NotFoundResult('Could not extract signature for "${query.target}"');
+      return NotFoundResult(
+          'Could not extract signature for "${query.target}"');
     }
 
     return SignatureResult(
@@ -1245,16 +1158,20 @@ class QueryExecutor {
         final regex = pattern.toRegExp();
         // Search all local indexes (project + workspace packages)
         for (final idx in allLocalIndexes) {
-          projectResults.addAll(idx.allSymbols.where((sym) {
-            return regex.hasMatch(sym.name) || regex.hasMatch(sym.symbol);
-          }),);
+          projectResults.addAll(
+            idx.allSymbols.where((sym) {
+              return regex.hasMatch(sym.name) || regex.hasMatch(sym.symbol);
+            }),
+          );
         }
         // Also search in all external packages (SDK, hosted, Flutter, git)
         if (provider != null) {
           for (final idx in provider!.allExternalIndexes) {
-            externalResults.addAll(idx.allSymbols.where((sym) {
-              return regex.hasMatch(sym.name) || regex.hasMatch(sym.symbol);
-            }),);
+            externalResults.addAll(
+              idx.allSymbols.where((sym) {
+                return regex.hasMatch(sym.name) || regex.hasMatch(sym.symbol);
+              }),
+            );
           }
         }
       } else if (pattern.type == PatternType.glob) {
@@ -1273,16 +1190,20 @@ class QueryExecutor {
         final regex = pattern.toRegExp();
         // Search all local indexes
         for (final idx in allLocalIndexes) {
-          projectResults.addAll(idx.allSymbols.where((sym) {
-            return regex.hasMatch(sym.name);
-          }),);
+          projectResults.addAll(
+            idx.allSymbols.where((sym) {
+              return regex.hasMatch(sym.name);
+            }),
+          );
         }
         // Also search in all external packages (SDK, hosted, Flutter, git)
         if (provider != null) {
           for (final idx in provider!.allExternalIndexes) {
-            externalResults.addAll(idx.allSymbols.where((sym) {
-              return regex.hasMatch(sym.name);
-            }),);
+            externalResults.addAll(
+              idx.allSymbols.where((sym) {
+                return regex.hasMatch(sym.name);
+              }),
+            );
           }
         }
       }
@@ -1317,188 +1238,13 @@ class QueryExecutor {
     final langFilter = query.languageFilter;
     if (langFilter != null) {
       results = results.where(
-        (s) => s.language != null && s.language!.toLowerCase() == langFilter.toLowerCase(),
+        (s) =>
+            s.language != null &&
+            s.language!.toLowerCase() == langFilter.toLowerCase(),
       );
     }
 
     return SearchResult(results.toList());
-  }
-
-  /// Search in source code (like grep).
-  Future<QueryResult> _grep(ScipQuery query) async {
-    final pattern = query.parsedPattern;
-
-    // Build the regex pattern
-    String regexPattern;
-    bool caseSensitive = pattern.caseSensitive;
-
-    if (query.fixedStrings) {
-      // -F: Treat pattern as literal string
-      regexPattern = RegExp.escape(query.target);
-    } else if (query.wordBoundary) {
-      // -w: Wrap pattern in word boundaries
-      regexPattern = r'\b' + pattern.pattern + r'\b';
-    } else {
-      regexPattern = pattern.type == PatternType.regex
-          ? pattern.pattern
-          : pattern.toRegExp().pattern;
-    }
-
-    // Handle multiline flag
-    final regex = RegExp(
-      regexPattern,
-      caseSensitive: caseSensitive,
-      multiLine: query.multiline,
-      dotAll: query.multiline, // Make . match newlines in multiline mode
-    );
-
-    final pathFilter = query.pathFilter;
-
-    // Handle -L (files without match)
-    if (query.filesWithoutMatch) {
-      final files = await index.grepFilesWithoutMatch(
-        regex,
-        pathFilter: pathFilter,
-        includeGlob: query.includeGlob,
-        excludeGlob: query.excludeGlob,
-      );
-      return GrepFilesResult(
-        pattern: query.target,
-        files: files,
-        isWithoutMatch: true,
-      );
-    }
-
-    // Use index directly for now (provider.grep has type mismatch issues)
-    // TODO: Unify grep types in index and provider
-    final matches = await index.grep(
-      regex,
-      pathFilter: pathFilter,
-      includeGlob: query.includeGlob,
-      excludeGlob: query.excludeGlob,
-      linesBefore: query.linesBefore,
-      linesAfter: query.linesAfter,
-      invertMatch: query.invertMatch,
-      maxPerFile: query.maxCount,
-      multiline: query.multiline,
-      onlyMatching: query.onlyMatching,
-    );
-
-    // Handle files-only output (-l)
-    if (query.filesOnly) {
-      final files = matches.map((m) => m.file).toSet().toList()..sort();
-      return GrepFilesResult(
-        pattern: query.target,
-        files: files,
-      );
-    }
-
-    // Handle count-only output (-c)
-    if (query.countOnly) {
-      final counts = <String, int>{};
-      for (final match in matches) {
-        counts[match.file] = (counts[match.file] ?? 0) + 1;
-      }
-      return GrepCountResult(
-        pattern: query.target,
-        fileCounts: counts,
-      );
-    }
-
-    final grepMatches = matches.map((m) {
-      return GrepMatch(
-        file: m.file,
-        line: m.line,
-        column: m.column,
-        matchText: m.matchText,
-        contextLines: m.contextLines,
-        contextBefore: m.contextBefore,
-        symbolContext: m.symbolContext,
-        matchLineCount: m.matchLineCount,
-      );
-    }).toList();
-
-    // Extract symbols from matches
-    final symbols = <String, SymbolInfo>{};
-    for (final match in matches) {
-      if (match.symbolContext != null) {
-        // Try to find the symbol by name in the file
-        final fileSymbols = index.symbolsInFile(match.file);
-        for (final sym in fileSymbols) {
-          if (sym.name == match.symbolContext) {
-            symbols[sym.symbol] = sym;
-            break;
-          }
-        }
-      } else {
-        // Find symbols at the match line
-        final fileSymbols = index.symbolsInFile(match.file);
-        for (final sym in fileSymbols) {
-          final def = index.findDefinition(sym.symbol);
-          if (def != null &&
-              def.line <= match.line &&
-              (def.enclosingEndLine ?? def.line + 100) >= match.line) {
-            symbols[sym.symbol] = sym;
-            break;
-          }
-        }
-      }
-    }
-
-    return GrepResult(
-      pattern: query.target,
-      matches: grepMatches,
-      symbols: symbols.values.toList(),
-    );
-  }
-
-  /// Show all matches for a symbol (disambiguation).
-  Future<QueryResult> _which(ScipQuery query) async {
-    final matches = index.getMatchesWithContext(query.target);
-
-    if (matches.isEmpty) {
-      return NotFoundResult('No symbols found matching "${query.target}"');
-    }
-
-    final whichMatches = matches.map((m) {
-      return WhichMatch(
-        symbol: m.symbol,
-        location: m.definition?.file ?? m.symbol.file,
-        container: m.container,
-        line: m.definition?.line,
-      );
-    }).toList();
-
-    // Sort by kind priority, then by container name
-    whichMatches.sort((a, b) {
-      final kindPriority = {
-        'class': 0,
-        'function': 1,
-        'enum': 2,
-        'mixin': 3,
-        'method': 4,
-        'field': 5,
-        'constructor': 6,
-        'getter': 7,
-        'setter': 8,
-      };
-      final aPriority = kindPriority[a.symbol.kindString] ?? 10;
-      final bPriority = kindPriority[b.symbol.kindString] ?? 10;
-      if (aPriority != bPriority) return aPriority.compareTo(bPriority);
-
-      // Secondary sort by container (null last)
-      if (a.container == null && b.container != null) return 1;
-      if (a.container != null && b.container == null) return -1;
-      if (a.container != null && b.container != null) {
-        return a.container!.compareTo(b.container!);
-      }
-      return 0;
-    });
-
-    return WhichResult(
-      query: query.target,
-      matches: whichMatches,
-    );
   }
 
   // ═══════════════════════════════════════════════════════════════════════
@@ -1579,7 +1325,7 @@ class QueryExecutor {
       // Try to find the file in the index
       // Import paths might be relative or package paths
       String? resolvedPath;
-      
+
       // Try direct match
       if (index.files.contains(importPath)) {
         resolvedPath = importPath;
@@ -1600,7 +1346,8 @@ class QueryExecutor {
     }
 
     // Get exported symbols from this file
-    final exportedSymbols = index.symbolsInFile(filePath)
+    final exportedSymbols = index
+        .symbolsInFile(filePath)
         .where((sym) => !sym.name.startsWith('_')) // Public symbols only
         .toList();
 
@@ -1637,8 +1384,8 @@ class QueryExecutor {
       // Get exported symbols from this file
       exportedSymbols.addAll(
         index.symbolsInFile(target).where(
-          (sym) => !sym.name.startsWith('_'), // Public symbols only
-        ),
+              (sym) => !sym.name.startsWith('_'), // Public symbols only
+            ),
       );
     } else {
       // Directory - list public symbols defined in it
@@ -1661,50 +1408,6 @@ class QueryExecutor {
       imports: [], // Only exports for directory
       exports: exports,
       exportedSymbols: exportedSymbols,
-    );
-  }
-
-  /// Find dependencies of a symbol.
-  ///
-  /// Uses [registry] for cross-package call graph when available.
-  Future<QueryResult> _findDeps(ScipQuery query) async {
-    final sym = _resolveSymbol(query);
-    if (sym == null) {
-      return NotFoundResult('Symbol "${query.target}" not found');
-    }
-
-    // Dependencies = what the symbol calls + types it uses
-    final deps = <String, SymbolInfo>{};
-
-    // Get direct calls from all indexes
-    final calls = provider != null
-        ? provider!.getCalls(sym.symbol)
-        : index.getCalls(sym.symbol).toList();
-
-    for (final called in calls) {
-      deps[called.symbol] = called;
-    }
-
-    // For classes, also include member dependencies
-    if (sym.kind == scip.SymbolInformation_Kind.Class) {
-      final children = index.getChildren(sym.symbol);
-      for (final childId in children) {
-        final childCalls = provider != null
-            ? provider!.getCalls(childId)
-            : index.getCalls(childId).toList();
-        for (final called in childCalls) {
-          deps[called.symbol] = called;
-        }
-      }
-    }
-
-    // Remove self-references and internal members
-    deps.remove(sym.symbol);
-    deps.removeWhere((id, _) => id.startsWith(sym.symbol));
-
-    return DependenciesResult(
-      symbol: sym,
-      dependencies: deps.values.toList(),
     );
   }
 
@@ -1839,61 +1542,5 @@ class QueryExecutor {
       file: filePath,
       symbols: symbols,
     );
-  }
-
-  /// Get a symbol by its exact SCIP ID.
-  ///
-  /// Usage: `get "dart pub my_app 1.0.0 lib/auth.dart/AuthService#login()."`
-  Future<QueryResult> _getByScipId(ScipQuery query) async {
-    final symbolId = query.target;
-
-    // Search in all indexes
-    SymbolInfo? symbol;
-
-    if (provider != null) {
-      symbol = provider!.getSymbol(symbolId);
-    } else {
-      symbol = index.getSymbol(symbolId);
-    }
-
-    if (symbol == null) {
-      return NotFoundResult('No symbol found with ID "$symbolId"');
-    }
-
-    // Get definition and source
-    OccurrenceInfo? def;
-    String? source;
-
-    if (provider != null) {
-      def = provider!.findDefinition(symbol.symbol);
-      if (def != null) {
-        source = await provider!.getSource(symbol.symbol);
-      }
-    } else {
-      def = index.findDefinition(symbol.symbol);
-      if (def != null) {
-        source = await index.getSource(symbol.symbol);
-      }
-    }
-
-    // If no definition found, create a synthetic location
-    final location = def ??
-        OccurrenceInfo(
-          symbol: symbol.symbol,
-          file: symbol.file ?? 'unknown',
-          line: 0,
-          column: 0,
-          endLine: 0,
-          endColumn: 0,
-          isDefinition: true,
-        );
-
-    return DefinitionResult([
-      DefinitionMatch(
-        symbol: symbol,
-        location: location,
-        source: source,
-      ),
-    ]);
   }
 }

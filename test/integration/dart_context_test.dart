@@ -133,17 +133,6 @@ void main() {
         );
       });
 
-      test('impls returns implementations', () async {
-        final result = await context.query('impls BaseService');
-        expect(result, isA<SearchResult>());
-
-        final searchResult = result as SearchResult;
-        expect(
-          searchResult.symbols.map((s) => s.name),
-          contains('UserService'),
-        );
-      });
-
       test('source returns source code', () async {
         final result = await context.query('source UserRepository');
         expect(result, isA<SourceResult>());

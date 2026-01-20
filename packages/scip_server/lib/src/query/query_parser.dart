@@ -4,48 +4,24 @@
 /// - `def <symbol>` - Find definition
 /// - `refs <symbol>` - Find references
 /// - `members <symbol>` - Get class members
-/// - `impls <symbol>` - Find implementations
-/// - `supertypes <symbol>` - Get supertypes
-/// - `subtypes <symbol>` - Get subtypes
 /// - `hierarchy <symbol>` - Full hierarchy (supertypes + subtypes)
 /// - `source <symbol>` - Get source code
 /// - `find <pattern> [kind:<kind>] [in:<path>] [lang:<language>]` - Search symbols
-/// - `which <symbol>` - Show all matches for disambiguation
-/// - `grep <pattern> [in:<path>] [-i] [-C:n]` - Search in source code (like grep)
 /// - `calls <symbol>` - What does this symbol call?
 /// - `callers <symbol>` - What calls this symbol?
 /// - `imports <file>` - What does this file import?
 /// - `exports <file>` - What does this file/directory export?
-/// - `deps <symbol>` - Dependencies of a symbol
 /// - `sig <symbol>` - Get signature (without body)
 /// - `symbols <file>` - List all symbols in a file
-/// - `get <scip-id>` - Direct lookup by exact SCIP symbol ID
 ///
 /// Qualified names:
 /// - `refs MyClass.login` - References to login method in MyClass
 /// - `def AuthService.authenticate` - Definition of authenticate in AuthService
 ///
-/// Filters (for `find` and `grep`):
+/// Filters (for `find`):
 /// - `kind:class` - Filter by symbol kind
 /// - `in:lib/` - Filter by file path prefix
 /// - `lang:dart` - Filter by programming language
-///
-/// Grep flags:
-/// - `-i` - Case insensitive
-/// - `-v` - Invert match (show non-matching lines)
-/// - `-w` - Word boundary (match whole words)
-/// - `-l` - Files only (just show filenames)
-/// - `-L` - Files without match (show files that don't match)
-/// - `-c` - Count only (count matches per file)
-/// - `-o` - Only matching (show just the matched text)
-/// - `-F` - Fixed strings (treat pattern as literal, not regex)
-/// - `-M` - Multiline (match patterns across lines)
-/// - `-C:n` - Context lines (before and after)
-/// - `-A:n` - Lines after match
-/// - `-B:n` - Lines before match
-/// - `-m:n` - Max matches (stop after n matches)
-/// - `--include:*.dart` - Only search files matching glob
-/// - `--exclude:*_test.dart` - Skip files matching glob
 ///
 /// Pattern syntax:
 /// - `Auth*` - Glob pattern (wildcard)
@@ -196,22 +172,15 @@ class ScipQuery {
       'def' || 'definition' => QueryAction.definition,
       'refs' || 'references' => QueryAction.references,
       'members' => QueryAction.members,
-      'impls' || 'implementations' => QueryAction.implementations,
-      'supertypes' || 'super' => QueryAction.supertypes,
-      'subtypes' || 'sub' => QueryAction.subtypes,
       'hierarchy' => QueryAction.hierarchy,
       'source' || 'src' => QueryAction.source,
       'find' || 'search' => QueryAction.find,
-      'which' || 'disambiguate' => QueryAction.which,
-      'grep' || 'rg' => QueryAction.grep,
       'calls' || 'callees' => QueryAction.calls,
       'callers' || 'calledby' => QueryAction.callers,
       'imports' => QueryAction.imports,
       'exports' => QueryAction.exports,
-      'deps' || 'dependencies' => QueryAction.deps,
       'sig' || 'signature' => QueryAction.signature,
       'symbols' => QueryAction.symbols,
-      'get' => QueryAction.get,
       'files' => QueryAction.files,
       'stats' => QueryAction.stats,
       _ => throw FormatException('Unknown action: $action'),
@@ -249,81 +218,8 @@ class ScipQuery {
   /// Get the language filter.
   String? get languageFilter => filters['lang'];
 
-  /// Get context lines for grep (-C:n).
-  /// Returns null if -A or -B are specified separately.
-  int? get contextLines {
-    // If -A or -B specified, don't use -C
-    if (filters.containsKey('A') || filters.containsKey('B')) {
-      return null;
-    }
-    final value = filters['C'] ?? filters['context'];
-    if (value == null) return 2; // Default
-    return int.tryParse(value) ?? 2;
-  }
-
-  /// Get lines after match (-A:n).
-  int get linesAfter {
-    final value = filters['A'] ?? filters['after'];
-    if (value != null) return int.tryParse(value) ?? 2;
-    return contextLines ?? 2;
-  }
-
-  /// Get lines before match (-B:n).
-  int get linesBefore {
-    final value = filters['B'] ?? filters['before'];
-    if (value != null) return int.tryParse(value) ?? 2;
-    return contextLines ?? 2;
-  }
-
-  /// Check if case insensitive (-i).
-  bool get caseInsensitive => filters.containsKey('i');
-
-  /// Check if invert match (-v).
-  bool get invertMatch => filters.containsKey('v');
-
-  /// Check if word boundary match (-w).
-  bool get wordBoundary => filters.containsKey('w');
-
-  /// Check if files-only output (-l).
-  bool get filesOnly => filters.containsKey('l');
-
-  /// Check if count-only output (-c).
-  bool get countOnly => filters.containsKey('c');
-
-  /// Get max matches (-m:n). Returns null for unlimited.
-  int? get maxCount {
-    final value = filters['m'] ?? filters['max'];
-    if (value == null) return null;
-    return int.tryParse(value);
-  }
-
-  /// Check if only-matching output (-o).
-  bool get onlyMatching => filters.containsKey('o');
-
-  /// Check if fixed strings mode (-F). Treats pattern as literal.
-  bool get fixedStrings => filters.containsKey('F');
-
-  /// Check if files-without-match mode (-L).
-  bool get filesWithoutMatch => filters.containsKey('L');
-
-  /// Check if multiline mode (-M). Matches across lines.
-  bool get multiline => filters.containsKey('M');
-
-  /// Get include glob pattern (--include:*.dart).
-  String? get includeGlob => filters['include'];
-
-  /// Get exclude glob pattern (--exclude:*_test.dart).
-  String? get excludeGlob => filters['exclude'];
-
-  /// Check if should search external dependencies (-D or --search-deps).
-  /// Only applies to grep command.
-  bool get searchDeps => filters.containsKey('D') || filters.containsKey('search-deps');
-
   /// Parse the target as a pattern.
-  ParsedPattern get parsedPattern => ParsedPattern.parse(
-        target,
-        defaultCaseSensitive: !caseInsensitive,
-      );
+  ParsedPattern get parsedPattern => ParsedPattern.parse(target);
 
   /// Check if target is a qualified name (e.g., "MyClass.method").
   bool get isQualified => target.contains('.') && !target.startsWith('/');
@@ -353,15 +249,6 @@ enum QueryAction {
   /// Get members of a class/type.
   members,
 
-  /// Find implementations of a class/interface.
-  implementations,
-
-  /// Get supertypes of a class.
-  supertypes,
-
-  /// Get subtypes (implementations) of a class.
-  subtypes,
-
   /// Get full hierarchy (supertypes + subtypes).
   hierarchy,
 
@@ -370,12 +257,6 @@ enum QueryAction {
 
   /// Search for symbols matching a pattern.
   find,
-
-  /// Show all matches for a symbol (disambiguation).
-  which,
-
-  /// Search in source code (like grep).
-  grep,
 
   /// What does this symbol call?
   calls,
@@ -389,17 +270,11 @@ enum QueryAction {
   /// What does this file/directory export?
   exports,
 
-  /// Dependencies of a symbol.
-  deps,
-
   /// Get signature (without body).
   signature,
 
   /// List all symbols in a file.
   symbols,
-
-  /// Direct lookup by exact SCIP symbol ID.
-  get,
 
   /// List all indexed files.
   files,

@@ -347,17 +347,6 @@ void main() {
       });
     });
 
-    group('implementations', () {
-      test('finds implementations of class', () async {
-        final result = await executor.execute('impls AuthRepository');
-        expect(result, isA<SearchResult>());
-
-        final searchResult = result as SearchResult;
-        expect(searchResult.symbols, hasLength(1));
-        expect(searchResult.symbols.first.name, 'AuthService');
-      });
-    });
-
     group('hierarchy', () {
       test('finds full hierarchy', () async {
         final result = await executor.execute('hierarchy AuthService');
@@ -561,12 +550,12 @@ void main() {
     });
 
     group('qualified names', () {
-      test('which command shows disambiguation options', () async {
-        // which shows all matches for a name
-        final result = await executor.execute('which login');
-        expect(result, isA<WhichResult>());
-        final which = result as WhichResult;
-        expect(which.matches, isNotEmpty);
+      test('find shows all matches with container context', () async {
+        // find shows all matches for a name with container info
+        final result = await executor.execute('find login');
+        expect(result, isA<SearchResult>());
+        final search = result as SearchResult;
+        expect(search.symbols, isNotEmpty);
       });
 
       test('def with specific name finds definition', () async {

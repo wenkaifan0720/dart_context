@@ -199,33 +199,6 @@ void main() {
     });
   });
 
-  group('DependenciesResult formatting', () {
-    test('uses proper plural for type aliases', () {
-      final result = DependenciesResult(
-        symbol: SymbolInfo(
-          symbol: 'test/MyClass#',
-          kind: scip.SymbolInformation_Kind.Class,
-          documentation: [],
-          relationships: [],
-          displayName: 'MyClass',
-        ),
-        dependencies: [
-          SymbolInfo(
-            symbol: 'test/MyCallback.',
-            kind: scip.SymbolInformation_Kind.TypeAlias,
-            documentation: [],
-            relationships: [],
-            displayName: 'MyCallback',
-          ),
-        ],
-      );
-
-      final text = result.toText();
-      expect(text, contains('Type Aliases'));
-      expect(text, isNot(contains('typealiass')));
-    });
-  });
-
   group('ScipIndex members filtering', () {
     late ScipIndex index;
 

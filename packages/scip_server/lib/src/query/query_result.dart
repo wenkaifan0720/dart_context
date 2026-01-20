@@ -11,12 +11,9 @@ import '../index/scip_index.dart';
 /// - [MembersResult] - Class/mixin members (`members`)
 /// - [SearchResult] - Symbol search matches (`find`)
 /// - [SourceResult] - Source code (`source`)
-/// - [HierarchyResult] - Type hierarchy (`hierarchy`, `supertypes`, `subtypes`)
-/// - [WhichResult] - Disambiguation matches (`which`)
-/// - [GrepResult] - Source code search (`grep`)
+/// - [HierarchyResult] - Type hierarchy (`hierarchy`)
 /// - [CallGraphResult] - Call relationships (`calls`, `callers`)
 /// - [ImportsResult] - Import/export analysis (`imports`, `exports`)
-/// - [DependenciesResult] - Symbol dependencies (`deps`)
 /// - [FilesResult] - Indexed files (`files`)
 /// - [StatsResult] - Index statistics (`stats`)
 /// - [PipelineResult] - Aggregated pipe query results
@@ -298,6 +295,15 @@ class MembersResult extends QueryResult {
 }
 
 /// Result containing symbol search matches.
+///
+/// Output includes container context (like `which` used to provide):
+/// ```
+/// ## Found 3 symbols
+///
+/// 1. login [method] in AuthService (lib/auth/service.dart)
+/// 2. login [method] in UserRepository (lib/data/repo.dart)
+/// 3. LoginPage [class] (lib/ui/login_page.dart)
+/// ```
 class SearchResult extends QueryResult {
   const SearchResult(this.symbols);
 
@@ -319,12 +325,29 @@ class SearchResult extends QueryResult {
     buffer.writeln('## Found ${symbols.length} symbols');
     buffer.writeln('');
 
-    for (final sym in symbols) {
-      final location = sym.file != null ? ' (${sym.file})' : ' (external)';
-      buffer.writeln('- **${sym.name}** [${sym.kindString}]$location');
+    for (var i = 0; i < symbols.length; i++) {
+      final sym = symbols[i];
+      final container = _extractContainer(sym.symbol);
+      final containerStr = container != null ? ' in $container' : '';
+      final location = sym.file != null ? ' (${sym.file})' : '';
+
+      buffer.writeln('${i + 1}. ${sym.name} [${sym.kindString}]$containerStr$location');
     }
 
     return buffer.toString().trimRight();
+  }
+
+  /// Extract the container (parent class/mixin) from a SCIP symbol ID.
+  ///
+  /// Symbol format: `scheme package version path/Class#method().`
+  /// Returns the class name if this is a member, null otherwise.
+  static String? _extractContainer(String symbolId) {
+    // Look for Class#member pattern
+    final match = RegExp(r'/([A-Za-z_][A-Za-z0-9_]*)#[^/]+$').firstMatch(symbolId);
+    if (match != null) {
+      return match.group(1);
+    }
+    return null;
   }
 
   @override
@@ -338,6 +361,8 @@ class SearchResult extends QueryResult {
                 'name': s.name,
                 'kind': s.kindString,
                 if (s.file != null) 'file': s.file,
+                if (_extractContainer(s.symbol) != null)
+                  'container': _extractContainer(s.symbol),
               },
             )
             .toList(),
@@ -670,94 +695,6 @@ class ErrorResult extends QueryResult {
       };
 }
 
-/// Result for disambiguation (which command).
-class WhichResult extends QueryResult {
-  const WhichResult({
-    required this.query,
-    required this.matches,
-  });
-
-  final String query;
-  final List<WhichMatch> matches;
-
-  @override
-  bool get isEmpty => matches.isEmpty;
-
-  @override
-  int get count => matches.length;
-
-  @override
-  String toText() {
-    if (matches.isEmpty) {
-      return 'No symbols found matching "$query".';
-    }
-
-    if (matches.length == 1) {
-      final m = matches.first;
-      return 'Found 1 match for "$query":\n'
-          '  ${m.symbol.name} [${m.symbol.kindString}] in ${m.location ?? 'external'}';
-    }
-
-    final buffer = StringBuffer();
-    buffer.writeln('## Found ${matches.length} symbols matching "$query"');
-    buffer.writeln('');
-    buffer.writeln('Use a qualified name to disambiguate:');
-    buffer.writeln('');
-
-    for (var i = 0; i < matches.length; i++) {
-      final m = matches[i];
-      final location = m.location ?? 'external';
-      final container = m.container;
-      final qualifiedHint =
-          container != null ? '$container.${m.symbol.name}' : m.symbol.name;
-
-      buffer.writeln('${i + 1}. **${m.symbol.name}** [${m.symbol.kindString}]');
-      buffer.writeln('   File: $location');
-      if (container != null) {
-        buffer.writeln('   Container: $container');
-        buffer.writeln('   Use: `refs $qualifiedHint`');
-      }
-      buffer.writeln('');
-    }
-
-    return buffer.toString().trimRight();
-  }
-
-  @override
-  Map<String, dynamic> toJson() => {
-        'type': 'which',
-        'query': query,
-        'count': matches.length,
-        'matches': matches
-            .map(
-              (m) => {
-                'symbol': m.symbol.symbol,
-                'name': m.symbol.name,
-                'kind': m.symbol.kindString,
-                if (m.location != null) 'file': m.location,
-                if (m.container != null) 'container': m.container,
-                if (m.line != null) 'line': m.line! + 1,
-              },
-            )
-            .toList(),
-      };
-}
-
-/// A single match for disambiguation.
-class WhichMatch {
-  const WhichMatch({
-    required this.symbol,
-    this.location,
-    this.container,
-    this.line,
-  });
-
-  final SymbolInfo symbol;
-  final String? location;
-  final String? container;
-  final int? line;
-}
-
 /// Result containing aggregated references from multiple symbols.
 class AggregatedReferencesResult extends QueryResult {
   const AggregatedReferencesResult({
@@ -981,69 +918,6 @@ class ImportsResult extends QueryResult {
       };
 }
 
-/// Result of dependencies analysis.
-class DependenciesResult extends QueryResult {
-  const DependenciesResult({
-    required this.symbol,
-    required this.dependencies,
-  });
-
-  final SymbolInfo symbol;
-  final List<SymbolInfo> dependencies;
-
-  @override
-  bool get isEmpty => dependencies.isEmpty;
-
-  @override
-  int get count => dependencies.length;
-
-  @override
-  String toText() {
-    if (dependencies.isEmpty) {
-      return '${symbol.name} has no dependencies.';
-    }
-
-    final buffer = StringBuffer();
-    buffer
-        .writeln('## Dependencies of ${symbol.name} (${dependencies.length})');
-    buffer.writeln('');
-
-    // Group by kind
-    final byKind = <String, List<SymbolInfo>>{};
-    for (final dep in dependencies) {
-      final kind = dep.kindString;
-      byKind.putIfAbsent(kind, () => []).add(dep);
-    }
-
-    for (final entry in byKind.entries) {
-      buffer.writeln('### ${_pluralize(entry.key)} (${entry.value.length})');
-      for (final sym in entry.value) {
-        final file = sym.file ?? 'external';
-        buffer.writeln('- `${sym.name}` ($file)');
-      }
-      buffer.writeln('');
-    }
-
-    return buffer.toString().trimRight();
-  }
-
-  @override
-  Map<String, dynamic> toJson() => {
-        'type': 'dependencies',
-        'symbol': symbol.name,
-        'count': dependencies.length,
-        'dependencies': dependencies
-            .map(
-              (d) => {
-                'name': d.name,
-                'kind': d.kindString,
-                'file': d.file,
-              },
-            )
-            .toList(),
-      };
-}
-
 /// Result of a pipeline query (aggregation of multiple results).
 class PipelineResult extends QueryResult {
   const PipelineResult({
@@ -1086,236 +960,6 @@ class PipelineResult extends QueryResult {
         'count': results.length,
         'totalCount': count,
         'results': results.map((r) => r.toJson()).toList(),
-      };
-}
-
-/// Result of a grep search across source files.
-///
-/// Matches are grouped by file and include:
-/// - Line number and column
-/// - Matching text
-/// - Context lines (configurable via `-C:n`)
-///
-/// Output format mimics classic grep with line numbers:
-/// ```
-/// ## Grep: TODO (3 matches)
-///
-/// ### lib/service.dart (2 matches)
-///
-/// >  42| // TODO: Implement caching
-///    43| final cache = <String, Object>{};
-///
-/// >  87| // TODO: Add error handling
-///    88| throw UnimplementedError();
-/// ```
-class GrepResult extends QueryResult {
-  const GrepResult({
-    required this.pattern,
-    required this.matches,
-    this.symbols = const [],
-  });
-
-  final String pattern;
-  final List<GrepMatch> matches;
-  final List<SymbolInfo> symbols; // Symbols containing the matches
-
-  @override
-  bool get isEmpty => matches.isEmpty;
-
-  @override
-  int get count => matches.length;
-
-  @override
-  String toText() {
-    if (matches.isEmpty) {
-      return 'No matches found for pattern "$pattern".';
-    }
-
-    final buffer = StringBuffer();
-    buffer.writeln('## Grep: $pattern (${matches.length} matches)');
-    buffer.writeln('');
-
-    // Check if this is -o (only matching) mode - context lines will be empty
-    final isOnlyMatching =
-        matches.isNotEmpty && matches.first.contextLines.isEmpty;
-
-    // Group by file
-    final byFile = <String, List<GrepMatch>>{};
-    for (final match in matches) {
-      byFile.putIfAbsent(match.file, () => []).add(match);
-    }
-
-    for (final entry in byFile.entries) {
-      buffer.writeln('### ${entry.key} (${entry.value.length} matches)');
-      buffer.writeln('');
-
-      if (isOnlyMatching) {
-        // -o mode: just show the matched text, one per line
-        for (final match in entry.value) {
-          buffer.writeln(
-            '${(match.line + 1).toString().padLeft(4)}:${match.column + 1}: ${match.matchText}',
-          );
-        }
-        buffer.writeln('');
-      } else {
-        // Normal mode: show context with line numbers
-        for (final match in entry.value) {
-          final lines = match.contextLines;
-          for (var i = 0; i < lines.length; i++) {
-            final lineNum = match.startLine - match.contextBefore + i + 1;
-            final isMatchLine = i >= match.contextBefore &&
-                i < match.contextBefore + match.matchLineCount;
-            final prefix = isMatchLine ? '>' : ' ';
-            buffer.writeln(
-              '$prefix${lineNum.toString().padLeft(4)}| ${lines[i]}',
-            );
-          }
-          buffer.writeln('');
-        }
-      }
-    }
-
-    return buffer.toString().trimRight();
-  }
-
-  @override
-  Map<String, dynamic> toJson() => {
-        'type': 'grep',
-        'pattern': pattern,
-        'count': matches.length,
-        'matches': matches
-            .map(
-              (m) => {
-                'file': m.file,
-                'line': m.line + 1,
-                'column': m.column + 1,
-                'matchText': m.matchText,
-                'context': m.contextLines.join('\n'),
-              },
-            )
-            .toList(),
-      };
-}
-
-/// A single grep match.
-class GrepMatch {
-  const GrepMatch({
-    required this.file,
-    required this.line,
-    required this.column,
-    required this.matchText,
-    required this.contextLines,
-    required this.contextBefore,
-    this.matchLineCount = 1,
-    this.symbolContext,
-  });
-
-  final String file;
-  final int line;
-  final int column;
-  final String matchText;
-  final List<String> contextLines;
-  final int contextBefore;
-  final int matchLineCount;
-  final String? symbolContext; // e.g., "in MyClass.myMethod"
-
-  int get startLine => line - contextBefore;
-}
-
-/// Result for grep with -l flag (files only) or -L flag (files without match).
-///
-/// Shows filenames that contain matches (-l) or don't contain matches (-L).
-class GrepFilesResult extends QueryResult {
-  const GrepFilesResult({
-    required this.pattern,
-    required this.files,
-    this.isWithoutMatch = false,
-  });
-
-  final String pattern;
-  final List<String> files;
-
-  /// If true, these are files that DON'T match (-L flag).
-  final bool isWithoutMatch;
-
-  @override
-  bool get isEmpty => files.isEmpty;
-
-  @override
-  int get count => files.length;
-
-  @override
-  String toText() {
-    final matchType = isWithoutMatch ? 'without' : 'matching';
-    if (files.isEmpty) {
-      return 'No files $matchType pattern "$pattern".';
-    }
-
-    final buffer = StringBuffer();
-    buffer.writeln(
-      '## Files $matchType: $pattern (${files.length} files)',
-    );
-    buffer.writeln('');
-    for (final file in files) {
-      buffer.writeln(file);
-    }
-    return buffer.toString();
-  }
-
-  @override
-  Map<String, dynamic> toJson() => {
-        'type': isWithoutMatch ? 'grep_files_without' : 'grep_files',
-        'pattern': pattern,
-        'files': files,
-        'count': files.length,
-        'isWithoutMatch': isWithoutMatch,
-      };
-}
-
-/// Result for grep with -c flag (count only).
-///
-/// Shows count of matches per file, like `grep -c`.
-class GrepCountResult extends QueryResult {
-  const GrepCountResult({
-    required this.pattern,
-    required this.fileCounts,
-  });
-
-  final String pattern;
-  final Map<String, int> fileCounts;
-
-  @override
-  bool get isEmpty => fileCounts.isEmpty;
-
-  @override
-  int get count => fileCounts.values.fold(0, (a, b) => a + b);
-
-  @override
-  String toText() {
-    if (fileCounts.isEmpty) {
-      return 'No matches found for pattern "$pattern".';
-    }
-
-    final buffer = StringBuffer();
-    buffer.writeln('## Grep count: $pattern ($count total matches)');
-    buffer.writeln('');
-
-    // Sort by count descending
-    final sorted = fileCounts.entries.toList()
-      ..sort((a, b) => b.value.compareTo(a.value));
-
-    for (final entry in sorted) {
-      buffer.writeln('${entry.value.toString().padLeft(6)}: ${entry.key}');
-    }
-    return buffer.toString();
-  }
-
-  @override
-  Map<String, dynamic> toJson() => {
-        'type': 'grep_count',
-        'pattern': pattern,
-        'fileCounts': fileCounts,
-        'totalCount': count,
       };
 }
 

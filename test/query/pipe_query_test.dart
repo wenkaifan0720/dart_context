@@ -138,9 +138,11 @@ void main() {
         expect(result, isA<QueryResult>());
       });
 
-      test('which | refs - disambiguate then find refs', () async {
-        final result = await executor.execute('which login | refs');
-        expect(result, isA<QueryResult>());
+      test('find as filter in pipe', () async {
+        // find in pipe context filters symbols instead of global search
+        final result =
+            await executor.execute('members AuthRepository | find *');
+        expect(result, isA<SearchResult>());
       });
     });
 
@@ -204,23 +206,6 @@ void main() {
       });
     });
 
-    group('grep piping', () {
-      test('grep | refs - find refs for symbols containing matches', () async {
-        // This would work if grep finds symbols
-        final result = await executor.execute('grep TODO | refs');
-        expect(result, isA<QueryResult>());
-      });
-
-      test('grep extracts symbols from matches', () async {
-        final grepResult = await executor.execute('grep TODO');
-        expect(grepResult, isA<GrepResult>());
-        
-        final grep = grepResult as GrepResult;
-        // Symbols should be populated if matches are in symbol definitions
-        expect(grep.symbols, isA<List<SymbolInfo>>());
-      });
-    });
-
     group('imports/exports piping', () {
       test('imports | refs - find refs for imported symbols', () async {
         final result = await executor.execute('imports lib/auth/service.dart | refs');
@@ -265,14 +250,11 @@ void main() {
         'hierarchy', // HierarchyResult -> super/subtypes
         'calls', // CallGraphResult -> called symbols
         'callers', // CallGraphResult -> caller symbols
-        'deps', // DependenciesResult -> dependency symbols
         'refs', // ReferencesResult -> the queried symbol
-        'which', // WhichResult -> matching symbols
-        'grep', // GrepResult -> symbols containing matches
         'imports', // ImportsResult -> imported/exported symbols
         'exports', // ImportsResult -> exported symbols
       ];
-      expect(supportedFirst.length, 12);
+      expect(supportedFirst.length, 9);
     });
 
     test('supported second queries', () {
@@ -282,28 +264,19 @@ void main() {
         'def', // Find definition
         'refs', // Find references
         'members', // Get members
-        'impls', // Find implementations
-        'supertypes', // Get supertypes
-        'subtypes', // Get subtypes
         'hierarchy', // Get hierarchy
         'source', // Get source
         'calls', // Get call graph (outgoing)
         'callers', // Get call graph (incoming)
-        'deps', // Get dependencies
+        'find', // Filter piped symbols by pattern
       ];
-      expect(supportedSecond.length, 11);
+      expect(supportedSecond.length, 8);
     });
 
-    test('unsupported combinations', () {
-      // These DON'T produce symbols, can't be first query:
-      // - files (returns file list)
-      // - stats (returns statistics)
-
-      // These DON'T accept symbols, can't be second query:
-      // - grep (needs pattern, though could accept symbol name as pattern)
-      // - imports/exports (needs file path)
-      // - files/stats (no target needed)
-      // - find (needs pattern, not symbol) - actually could work
+    test('find as pipe filter', () {
+      // In pipe context, find filters incoming symbols instead of global search
+      // Example: members MyClass | find get* kind:method
+      // This filters MyClass members to only those starting with "get"
       expect(true, isTrue); // Documentation test
     });
   });

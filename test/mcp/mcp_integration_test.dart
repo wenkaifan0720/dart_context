@@ -203,32 +203,14 @@ class MyClass {
         expect(result.textContent, contains('doSomething'));
       });
 
-      test('dart_query grep finds text in source', () async {
+      test('dart_query find shows all matches with context', () async {
         final result =
-            await env.callTool('dart_query', {'query': 'grep Hello'});
-
-        if (result.isError == true) {
-          fail('Query failed: ${result.textContent}');
-        }
-        expect(result.textContent, contains('Hello'));
-      });
-
-      test('dart_query which shows disambiguation', () async {
-        final result =
-            await env.callTool('dart_query', {'query': 'which main'});
+            await env.callTool('dart_query', {'query': 'find main'});
 
         if (result.isError == true) {
           fail('Query failed: ${result.textContent}');
         }
         expect(result.textContent, contains('main'));
-      });
-
-      test('dart_query impls returns implementations', () async {
-        final result =
-            await env.callTool('dart_query', {'query': 'impls MyClass'});
-
-        // May be empty if no implementations exist
-        expect(result.isError, isNot(true));
       });
 
       test('dart_query hierarchy returns type hierarchy', () async {

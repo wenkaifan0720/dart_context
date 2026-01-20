@@ -110,12 +110,6 @@ void main() {
         expect(query.filters['kind'], '');
       });
 
-      test('multiple dash flags', () {
-        final query = ScipQuery.parse('grep TODO -i -C:5');
-        expect(query.caseInsensitive, isTrue);
-        expect(query.contextLines, 5);
-      });
-
       test('unknown kind filter returns null', () {
         final query = ScipQuery.parse('find * kind:unknown_kind');
         expect(query.kindFilter, isNull);
@@ -157,31 +151,7 @@ void main() {
       });
     });
 
-    group('Grep edge cases', () {
-      test('context lines default', () {
-        final query = ScipQuery.parse('grep TODO');
-        expect(query.contextLines, 2);
-      });
-
-      test('context lines zero', () {
-        final query = ScipQuery.parse('grep TODO -C:0');
-        expect(query.contextLines, 0);
-      });
-
-      test('invalid context lines uses default', () {
-        final query = ScipQuery.parse('grep TODO -C:abc');
-        expect(query.contextLines, 2); // Default
-      });
-    });
-
     group('Result formatting edge cases', () {
-      test('empty grep result', () {
-        final result = GrepResult(pattern: 'test', matches: []);
-        expect(result.isEmpty, isTrue);
-        expect(result.toText(), contains('No matches found'));
-        expect(result.toJson()['count'], 0);
-      });
-
       test('not found result', () {
         final result = NotFoundResult('Symbol "test" not found');
         expect(result.isEmpty, isTrue);

@@ -207,7 +207,7 @@ void main() {
     });
 
     group('SearchResult', () {
-      test('shows external symbols differently', () {
+      test('shows internal and external symbols', () {
         final result = SearchResult([
           SymbolInfo(
             symbol: 'internal',
@@ -223,13 +223,16 @@ void main() {
             documentation: [],
             relationships: [],
             displayName: 'ExternalClass',
-            file: null, // External
+            file: null, // External symbols have no file
           ),
         ]);
 
         final text = result.toText();
         expect(text, contains('lib/internal.dart'));
-        expect(text, contains('external'));
+        expect(text, contains('ExternalClass'));
+        // External symbols don't show a location
+        expect(text, contains('1.'));
+        expect(text, contains('2.'));
       });
     });
 

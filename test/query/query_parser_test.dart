@@ -24,34 +24,6 @@ void main() {
         expect(query.target, 'AuthRepository');
       });
 
-      test('parses impls action', () {
-        final query = ScipQuery.parse('impls BaseWidget');
-        expect(query.action, QueryAction.implementations);
-        expect(query.target, 'BaseWidget');
-      });
-
-      test('parses implementations as alias', () {
-        final query = ScipQuery.parse('implementations BaseWidget');
-        expect(query.action, QueryAction.implementations);
-      });
-
-      test('parses supertypes action', () {
-        final query = ScipQuery.parse('supertypes MyClass');
-        expect(query.action, QueryAction.supertypes);
-        expect(query.target, 'MyClass');
-      });
-
-      test('parses super as alias', () {
-        final query = ScipQuery.parse('super MyClass');
-        expect(query.action, QueryAction.supertypes);
-      });
-
-      test('parses subtypes action', () {
-        final query = ScipQuery.parse('subtypes BaseClass');
-        expect(query.action, QueryAction.subtypes);
-        expect(query.target, 'BaseClass');
-      });
-
       test('parses hierarchy action', () {
         final query = ScipQuery.parse('hierarchy Widget');
         expect(query.action, QueryAction.hierarchy);

@@ -182,8 +182,15 @@ class SymbolGenerator {
     // and name must be handled custom
     if (_isInSdk(element)) {
       final packageName = _pathForSdkElement(element).split('/').first;
-      final packageVersion =
-          element.library!.languageVersion.package.toString();
+      // PrefixElement.library crashes in analyzer 7.7.x, so we avoid accessing it.
+      // For PrefixElements, use a placeholder version since they're just import prefixes.
+      final String packageVersion;
+      if (element is PrefixElement) {
+        packageVersion =
+            '0.0.0'; // Prefix elements don't have meaningful versions
+      } else {
+        packageVersion = element.library!.languageVersion.package.toString();
+      }
       return 'pub $packageName $packageVersion';
     }
 
@@ -206,6 +213,13 @@ class SymbolGenerator {
       // this should only happen if the source references a package that is not defined
       // in the pubspec (as a main or transitive dep)
       throw Exception('Unable to find package within packageConfig');
+    }
+
+    // For the synthetic dart-sdk package (used during SDK indexing), use the
+    // version from our pubspec since there's no real pubspec.yaml in the SDK.
+    if (package.name == 'dart-sdk') {
+      final version = _pubspec.version?.toString() ?? '.';
+      return 'pub dart-sdk $version';
     }
 
     final packageVersion =
@@ -350,11 +364,13 @@ class SymbolGenerator {
       return '${_getDescriptor(encEle)}${element.name}.';
     }
 
+    // Note: sourcePath is already defined above, so we reuse it here.
+    // We avoid element.library since it crashes for PrefixElement in analyzer 7.7.x.
     display(
       '\n'
       'Received unknown type (${element.runtimeType})\n'
       '\tname: ${element.name}\n'
-      '\tpath: (${element.library!.source.fullName})'
+      '\tpath: ($sourcePath)'
       '\n',
     );
     return null;
@@ -376,7 +392,37 @@ class SymbolGenerator {
   }
 
   bool _isInSdk(Element element) {
-    return element.library?.isInSdk == true;
+    // PrefixElement.library crashes in analyzer 7.7.x due to a type cast error
+    // (PrefixElementImpl doesn't implement Fragment). Use source URI instead.
+    if (element is PrefixElement) {
+      final uri = element.source?.uri;
+      return uri != null && uri.isScheme('dart');
+    }
+
+    // First check the normal isInSdk flag
+    if (element.library?.isInSdk == true) {
+      return true;
+    }
+
+    // When analyzing SDK files directly (not through dart: URIs), isInSdk may
+    // be false even for SDK files. Check if the source URI uses dart: scheme
+    // or if the source path looks like an SDK path.
+    final uri = element.source?.uri;
+    if (uri != null) {
+      if (uri.isScheme('dart')) {
+        return true;
+      }
+      // Check for common SDK path patterns (file:// URIs during SDK indexing)
+      // Only check file:// URIs since toFilePath() throws for other schemes.
+      if (uri.isScheme('file')) {
+        final path = uri.toFilePath();
+        if (path.contains('/dart-sdk/lib/') ||
+            path.contains('/bin/cache/dart-sdk/lib/')) {
+          return true;
+        }
+      }
+    }
+    return false;
   }
 
   String _pathForSdkElement(Element element) {
